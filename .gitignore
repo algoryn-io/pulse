@@ -1,0 +1,10 @@
+# Go build cache
+.gocache/
+
+# binaries
+bin/
+dist/
+
+# test artifacts
+*.test
+*.out
