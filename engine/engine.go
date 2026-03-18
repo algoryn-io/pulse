@@ -2,7 +2,9 @@ package engine
 
 import (
 	"context"
+	"time"
 
+	"github.com/jmgo38/Pulse/metrics"
 	"github.com/jmgo38/Pulse/scheduler"
 )
 
@@ -21,12 +23,22 @@ func New(phases []scheduler.Phase, scenario func(context.Context) error) *Engine
 }
 
 // Run executes each phase in sequence through the scheduler.
-func (e *Engine) Run(ctx context.Context) error {
+func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
+	aggregator := metrics.NewAggregator()
+	startedAt := time.Now()
+
+	wrappedScenario := func(ctx context.Context) error {
+		executionStartedAt := time.Now()
+		err := e.scenario(ctx)
+		aggregator.Record(time.Since(executionStartedAt), err != nil)
+		return err
+	}
+
 	for _, phase := range e.phases {
-		if err := scheduler.Run(ctx, phase, e.scenario); err != nil {
-			return err
+		if err := scheduler.Run(ctx, phase, wrappedScenario); err != nil {
+			return aggregator.Result(time.Since(startedAt)), err
 		}
 	}
 
-	return nil
+	return aggregator.Result(time.Since(startedAt)), nil
 }

@@ -84,12 +84,32 @@ func TestRunExecutesScenario(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	if got != (Result{}) {
-		t.Fatalf("expected zero-value result, got %+v", got)
-	}
-
 	if calls == 0 {
 		t.Fatal("expected scenario to execute at least once")
+	}
+
+	if got.Total != int64(calls) {
+		t.Fatalf("expected total %d, got %d", calls, got.Total)
+	}
+
+	if got.Failed != 0 {
+		t.Fatalf("expected 0 failures, got %d", got.Failed)
+	}
+
+	if got.Duration <= 0 {
+		t.Fatalf("expected positive duration, got %v", got.Duration)
+	}
+
+	if got.Latency.Min <= 0 {
+		t.Fatalf("expected positive min latency, got %v", got.Latency.Min)
+	}
+
+	if got.Latency.Max <= 0 {
+		t.Fatalf("expected positive max latency, got %v", got.Latency.Max)
+	}
+
+	if got.Latency.Mean <= 0 {
+		t.Fatalf("expected positive mean latency, got %v", got.Latency.Mean)
 	}
 }
 
@@ -106,8 +126,24 @@ func TestRunPropagatesScenarioError(t *testing.T) {
 		},
 	}
 
-	_, err := Run(test)
+	got, err := Run(test)
 	if err != wantErr {
 		t.Fatalf("expected %v, got %v", wantErr, err)
+	}
+
+	if got.Total != 1 {
+		t.Fatalf("expected total 1, got %d", got.Total)
+	}
+
+	if got.Failed != 1 {
+		t.Fatalf("expected failed 1, got %d", got.Failed)
+	}
+
+	if got.Duration <= 0 {
+		t.Fatalf("expected positive duration, got %v", got.Duration)
+	}
+
+	if got.Latency.Min <= 0 || got.Latency.Max <= 0 || got.Latency.Mean <= 0 {
+		t.Fatalf("expected latency fields to be populated, got %+v", got.Latency)
 	}
 }
