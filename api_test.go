@@ -49,13 +49,28 @@ func TestRunReturnsErrorWhenPhaseDurationIsNotPositive(t *testing.T) {
 	}
 }
 
-func TestRunExecutesScenarioOncePerPhase(t *testing.T) {
+func TestRunReturnsErrorWhenPhaseArrivalRateIsNotPositive(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 0},
+			},
+		},
+		Scenario: func(context.Context) error { return nil },
+	}
+
+	_, err := Run(test)
+	if err != errNonPositiveArrivalRate {
+		t.Fatalf("expected %v, got %v", errNonPositiveArrivalRate, err)
+	}
+}
+
+func TestRunExecutesScenario(t *testing.T) {
 	calls := 0
 	test := Test{
 		Config: Config{
 			Phases: []Phase{
-				{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1},
-				{Type: PhaseTypeConstant, Duration: 2 * time.Second, ArrivalRate: 2},
+				{Type: PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 50},
 			},
 		},
 		Scenario: func(context.Context) error {
@@ -73,8 +88,8 @@ func TestRunExecutesScenarioOncePerPhase(t *testing.T) {
 		t.Fatalf("expected zero-value result, got %+v", got)
 	}
 
-	if calls != len(test.Config.Phases) {
-		t.Fatalf("expected %d scenario calls, got %d", len(test.Config.Phases), calls)
+	if calls == 0 {
+		t.Fatal("expected scenario to execute at least once")
 	}
 }
 
@@ -83,7 +98,7 @@ func TestRunPropagatesScenarioError(t *testing.T) {
 	test := Test{
 		Config: Config{
 			Phases: []Phase{
-				{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1},
+				{Type: PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 50},
 			},
 		},
 		Scenario: func(context.Context) error {

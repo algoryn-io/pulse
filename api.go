@@ -6,23 +6,26 @@ import (
 	"time"
 
 	"github.com/jmgo38/Pulse/engine"
+	"github.com/jmgo38/Pulse/model"
+	"github.com/jmgo38/Pulse/scheduler"
 )
 
 var (
-	errNoPhases         = errors.New("pulse: at least one phase is required")
-	errNilScenario      = errors.New("pulse: scenario must not be nil")
-	errNonPositivePhase = errors.New("pulse: phase duration must be positive")
+	errNoPhases               = errors.New("pulse: at least one phase is required")
+	errNilScenario            = errors.New("pulse: scenario must not be nil")
+	errNonPositivePhase       = errors.New("pulse: phase duration must be positive")
+	errNonPositiveArrivalRate = errors.New("pulse: phase arrival rate must be positive")
 )
 
 // Scenario is the user-defined workload executed by Pulse.
 type Scenario func(ctx context.Context) error
 
 // PhaseType describes how a phase should be executed.
-type PhaseType string
+type PhaseType = model.PhaseType
 
 const (
 	// PhaseTypeConstant represents a constant arrival-rate phase.
-	PhaseTypeConstant PhaseType = "constant"
+	PhaseTypeConstant = model.PhaseTypeConstant
 )
 
 // Phase defines the minimal execution shape for the MVP.
@@ -66,7 +69,7 @@ func Run(test Test) (Result, error) {
 		return Result{}, err
 	}
 
-	execution := engine.New(len(test.Config.Phases), test.Scenario)
+	execution := engine.New(toSchedulerPhases(test.Config.Phases), test.Scenario)
 
 	if err := execution.Run(context.Background()); err != nil {
 		return Result{}, err
@@ -88,7 +91,24 @@ func validateTest(test Test) error {
 		if phase.Duration <= 0 {
 			return errNonPositivePhase
 		}
+
+		if phase.ArrivalRate <= 0 {
+			return errNonPositiveArrivalRate
+		}
 	}
 
 	return nil
+}
+
+func toSchedulerPhases(phases []Phase) []scheduler.Phase {
+	schedulerPhases := make([]scheduler.Phase, len(phases))
+	for i := range phases {
+		schedulerPhases[i] = scheduler.Phase{
+			Type:        phases[i].Type,
+			Duration:    phases[i].Duration,
+			ArrivalRate: phases[i].ArrivalRate,
+		}
+	}
+
+	return schedulerPhases
 }

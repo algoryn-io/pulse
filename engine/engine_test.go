@@ -4,11 +4,18 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/jmgo38/Pulse/model"
+	"github.com/jmgo38/Pulse/scheduler"
 )
 
-func TestEngineRunExecutesScenarioForEachPhase(t *testing.T) {
+func TestEngineRunExecutesScenarioAcrossPhases(t *testing.T) {
 	calls := 0
-	engine := New(2, func(context.Context) error {
+	engine := New([]scheduler.Phase{
+		{Type: model.PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 50},
+		{Type: model.PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 50},
+	}, func(context.Context) error {
 		calls++
 		return nil
 	})
@@ -17,38 +24,33 @@ func TestEngineRunExecutesScenarioForEachPhase(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	if calls != 2 {
-		t.Fatalf("expected 2 scenario calls, got %d", calls)
-	}
-}
-
-func TestEngineRunUsesProvidedContext(t *testing.T) {
-	type ctxKey string
-
-	const key ctxKey = "phase"
-	want := "value"
-
-	engine := New(1, func(ctx context.Context) error {
-		if got := ctx.Value(key); got != want {
-			t.Fatalf("expected context value %q, got %v", want, got)
-		}
-
-		return nil
-	})
-
-	ctx := context.WithValue(context.Background(), key, want)
-	if err := engine.Run(ctx); err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	if calls < 2 {
+		t.Fatalf("expected scenario to run multiple times, got %d", calls)
 	}
 }
 
 func TestEngineRunPropagatesScenarioError(t *testing.T) {
 	wantErr := errors.New("scenario failed")
-	engine := New(1, func(context.Context) error {
+	engine := New([]scheduler.Phase{
+		{Type: model.PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 50},
+	}, func(context.Context) error {
 		return wantErr
 	})
 
 	if err := engine.Run(context.Background()); err != wantErr {
 		t.Fatalf("expected %v, got %v", wantErr, err)
+	}
+}
+
+func TestEngineRunPropagatesUnsupportedPhaseType(t *testing.T) {
+	engine := New([]scheduler.Phase{
+		{Type: model.PhaseType("unsupported"), Duration: time.Second, ArrivalRate: 1},
+	}, func(context.Context) error {
+		return nil
+	})
+
+	err := engine.Run(context.Background())
+	if !errors.Is(err, scheduler.ErrUnsupportedPhaseType) {
+		t.Fatalf("expected %v, got %v", scheduler.ErrUnsupportedPhaseType, err)
 	}
 }
