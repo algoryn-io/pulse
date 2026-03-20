@@ -1,6 +1,10 @@
 # Go build cache
 .gocache/
 
+# IDE files
+.idea/
+*.iml
+
 # binaries
 bin/
 dist/
