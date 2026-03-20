@@ -24,7 +24,7 @@ func TestRunPrintsResults(t *testing.T) {
 		execute = previousExecute
 	})
 
-	execute = func() (pulse.Result, error) {
+	execute = func([]string) (pulse.Result, error) {
 		return pulse.Result{
 			Total:    15,
 			Failed:   2,
@@ -62,7 +62,7 @@ func TestRunPrintsResultsWhenExecutionFails(t *testing.T) {
 	})
 
 	wantErr := errors.New("request failed")
-	execute = func() (pulse.Result, error) {
+	execute = func([]string) (pulse.Result, error) {
 		return pulse.Result{
 			Total:    4,
 			Failed:   1,

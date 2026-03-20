@@ -8,10 +8,11 @@ import (
 	"time"
 
 	pulse "github.com/jmgo38/Pulse"
+	"github.com/jmgo38/Pulse/config"
 	"github.com/jmgo38/Pulse/transport"
 )
 
-const usageMessage = "usage: pulse run\n\nRuns a sample load test"
+const usageMessage = "usage: pulse run [config.yaml]\n\nRuns a sample load test or a YAML-defined test"
 
 var errUsage = fmt.Errorf(usageMessage)
 var execute = runTest
@@ -24,11 +25,11 @@ func main() {
 }
 
 func run(args []string, stdout io.Writer) error {
-	if len(args) != 1 || args[0] != "run" {
+	if len(args) == 0 || args[0] != "run" || len(args) > 2 {
 		return errUsage
 	}
 
-	result, err := execute()
+	result, err := execute(args[1:])
 	fmt.Fprintf(stdout, "Total requests: %d\n", result.Total)
 	fmt.Fprintf(stdout, "Failed requests: %d\n", result.Failed)
 	fmt.Fprintf(stdout, "Duration: %v\n", result.Duration)
@@ -39,7 +40,16 @@ func run(args []string, stdout io.Writer) error {
 	return err
 }
 
-func runTest() (pulse.Result, error) {
+func runTest(args []string) (pulse.Result, error) {
+	if len(args) == 1 {
+		test, err := config.Load(args[0])
+		if err != nil {
+			return pulse.Result{}, err
+		}
+
+		return pulse.Run(test)
+	}
+
 	client := transport.NewHTTPClient()
 	test := pulse.Test{
 		Config: pulse.Config{
