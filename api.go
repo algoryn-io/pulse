@@ -3,6 +3,7 @@ package pulse
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jmgo38/Pulse/engine"
@@ -15,6 +16,9 @@ var (
 	errNilScenario            = errors.New("pulse: scenario must not be nil")
 	errNonPositivePhase       = errors.New("pulse: phase duration must be positive")
 	errNonPositiveArrivalRate = errors.New("pulse: phase arrival rate must be positive")
+	errNegativeErrorRate      = errors.New("pulse: threshold error rate must not be negative")
+	errErrorRateAboveOne      = errors.New("pulse: threshold error rate must not be greater than 1")
+	errNegativeMeanLatency    = errors.New("pulse: threshold mean latency must not be negative")
 )
 
 // Scenario is the user-defined workload executed by Pulse.
@@ -35,10 +39,17 @@ type Phase struct {
 	ArrivalRate int
 }
 
+// Thresholds define basic pass/fail conditions for a run.
+type Thresholds struct {
+	ErrorRate      float64
+	MaxMeanLatency time.Duration
+}
+
 // Config holds execution configuration for a test.
 type Config struct {
 	Phases         []Phase
 	MaxConcurrency int
+	Thresholds     Thresholds
 }
 
 // Test is the root public input for a Pulse run.
@@ -86,10 +97,10 @@ func Run(test Test) (Result, error) {
 	}
 
 	if err != nil {
-		return result, err
+		return result, errors.Join(err, evaluateThresholds(test.Config.Thresholds, result))
 	}
 
-	return result, nil
+	return result, evaluateThresholds(test.Config.Thresholds, result)
 }
 
 func validateTest(test Test) error {
@@ -111,7 +122,48 @@ func validateTest(test Test) error {
 		}
 	}
 
+	if test.Config.Thresholds.ErrorRate < 0 {
+		return errNegativeErrorRate
+	}
+
+	if test.Config.Thresholds.ErrorRate > 1 {
+		return errErrorRateAboveOne
+	}
+
+	if test.Config.Thresholds.MaxMeanLatency < 0 {
+		return errNegativeMeanLatency
+	}
+
 	return nil
+}
+
+func evaluateThresholds(thresholds Thresholds, result Result) error {
+	var errs []error
+
+	if thresholds.ErrorRate > 0 {
+		var errorRate float64
+		if result.Total > 0 {
+			errorRate = float64(result.Failed) / float64(result.Total)
+		}
+
+		if errorRate > thresholds.ErrorRate {
+			errs = append(errs, fmt.Errorf(
+				"pulse: threshold error rate violated: got %.4f, limit %.4f",
+				errorRate,
+				thresholds.ErrorRate,
+			))
+		}
+	}
+
+	if thresholds.MaxMeanLatency > 0 && result.Latency.Mean > thresholds.MaxMeanLatency {
+		errs = append(errs, fmt.Errorf(
+			"pulse: threshold mean latency violated: got %v, limit %v",
+			result.Latency.Mean,
+			thresholds.MaxMeanLatency,
+		))
+	}
+
+	return errors.Join(errs...)
 }
 
 func toSchedulerPhases(phases []Phase) []scheduler.Phase {

@@ -38,7 +38,7 @@ func TestLoadMapsYAMLToPulseTest(t *testing.T) {
 	path := filepath.Join(dir, "test.yaml")
 	content := "" +
 		"phases:\n" +
-		"  - type: constant\n" +
+		"  - type:  CoNsTaNt  \n" +
 		"    duration: 3s\n" +
 		"    arrivalRate: 5\n" +
 		"target:\n" +
@@ -63,6 +63,10 @@ func TestLoadMapsYAMLToPulseTest(t *testing.T) {
 		t.Fatalf("expected max concurrency 5, got %d", test.Config.MaxConcurrency)
 	}
 
+	if test.Config.Thresholds.ErrorRate != 0 {
+		t.Fatalf("expected zero error rate threshold, got %v", test.Config.Thresholds.ErrorRate)
+	}
+
 	phase := test.Config.Phases[0]
 	if phase.Type != pulse.PhaseTypeConstant {
 		t.Fatalf("expected constant phase, got %s", phase.Type)
@@ -78,6 +82,39 @@ func TestLoadMapsYAMLToPulseTest(t *testing.T) {
 
 	if test.Scenario == nil {
 		t.Fatal("expected scenario to be configured")
+	}
+}
+
+func TestLoadMapsThresholds(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	content := "" +
+		"phases:\n" +
+		"  - type: constant\n" +
+		"    duration: 3s\n" +
+		"    arrivalRate: 5\n" +
+		"target:\n" +
+		"  method: GET\n" +
+		"  url: https://httpbin.org/get\n" +
+		"thresholds:\n" +
+		"  errorRate: 0.05\n" +
+		"  maxMeanLatency: 200ms\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	test, err := Load(path)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if test.Config.Thresholds.ErrorRate != 0.05 {
+		t.Fatalf("expected error rate 0.05, got %v", test.Config.Thresholds.ErrorRate)
+	}
+
+	if test.Config.Thresholds.MaxMeanLatency != 200*time.Millisecond {
+		t.Fatalf("expected mean latency 200ms, got %v", test.Config.Thresholds.MaxMeanLatency)
 	}
 }
 
@@ -176,5 +213,49 @@ func TestLoadValidatesRequiredFields(t *testing.T) {
 	_, err := Load(path)
 	if err != errNoPhases {
 		t.Fatalf("expected %v, got %v", errNoPhases, err)
+	}
+}
+
+func TestLoadRejectsNonPositivePhaseDuration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	content := "" +
+		"phases:\n" +
+		"  - type: constant\n" +
+		"    duration: 0s\n" +
+		"    arrivalRate: 1\n" +
+		"target:\n" +
+		"  method: GET\n" +
+		"  url: https://httpbin.org/get\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	_, err := Load(path)
+	if err != errNonPositivePhase {
+		t.Fatalf("expected %v, got %v", errNonPositivePhase, err)
+	}
+}
+
+func TestLoadRejectsNonPositiveArrivalRate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	content := "" +
+		"phases:\n" +
+		"  - type: constant\n" +
+		"    duration: 1s\n" +
+		"    arrivalRate: 0\n" +
+		"target:\n" +
+		"  method: GET\n" +
+		"  url: https://httpbin.org/get\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	_, err := Load(path)
+	if err != errNonPositiveRate {
+		t.Fatalf("expected %v, got %v", errNonPositiveRate, err)
 	}
 }

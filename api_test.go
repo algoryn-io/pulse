@@ -129,7 +129,7 @@ func TestRunPropagatesScenarioError(t *testing.T) {
 	}
 
 	got, err := Run(test)
-	if err != wantErr {
+	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected %v, got %v", wantErr, err)
 	}
 
@@ -147,5 +147,65 @@ func TestRunPropagatesScenarioError(t *testing.T) {
 
 	if got.Latency.Min <= 0 || got.Latency.Max <= 0 || got.Latency.Mean <= 0 {
 		t.Fatalf("expected latency fields to be populated, got %+v", got.Latency)
+	}
+}
+
+func TestRunPassesThresholds(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 20},
+			},
+			MaxConcurrency: 2,
+			Thresholds: Thresholds{
+				ErrorRate:      0.5,
+				MaxMeanLatency: 50 * time.Millisecond,
+			},
+		},
+		Scenario: func(context.Context) error {
+			time.Sleep(5 * time.Millisecond)
+			return nil
+		},
+	}
+
+	got, err := Run(test)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got.Total == 0 {
+		t.Fatal("expected executions to run")
+	}
+}
+
+func TestRunFailsWhenThresholdsAreViolated(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 20},
+			},
+			MaxConcurrency: 2,
+			Thresholds: Thresholds{
+				ErrorRate:      0.1,
+				MaxMeanLatency: time.Millisecond,
+			},
+		},
+		Scenario: func(context.Context) error {
+			time.Sleep(5 * time.Millisecond)
+			return errors.New("scenario failed")
+		},
+	}
+
+	got, err := Run(test)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	if got.Total != 1 {
+		t.Fatalf("expected total 1, got %d", got.Total)
+	}
+
+	if got.Failed != 1 {
+		t.Fatalf("expected failed 1, got %d", got.Failed)
 	}
 }

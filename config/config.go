@@ -17,6 +17,8 @@ import (
 var (
 	errNoPhases          = errors.New("config: at least one phase is required")
 	errEmptyPhaseType    = errors.New("config: phase type is required")
+	errNonPositivePhase  = errors.New("config: phase duration must be positive")
+	errNonPositiveRate   = errors.New("config: phase arrival rate must be positive")
 	errEmptyTargetMethod = errors.New("config: target method is required")
 	errEmptyTargetURL    = errors.New("config: target url is required")
 	errUnsupportedMethod = errors.New("config: unsupported target method")
@@ -28,9 +30,10 @@ type httpClient interface {
 }
 
 type fileConfig struct {
-	Phases         []phaseConfig `yaml:"phases"`
-	Target         targetConfig  `yaml:"target"`
-	MaxConcurrency int           `yaml:"maxConcurrency"`
+	Phases         []phaseConfig    `yaml:"phases"`
+	Target         targetConfig     `yaml:"target"`
+	MaxConcurrency int              `yaml:"maxConcurrency"`
+	Thresholds     thresholdsConfig `yaml:"thresholds"`
 }
 
 type phaseConfig struct {
@@ -43,6 +46,11 @@ type targetConfig struct {
 	Method string `yaml:"method"`
 	URL    string `yaml:"url"`
 	Body   string `yaml:"body"`
+}
+
+type thresholdsConfig struct {
+	ErrorRate      float64  `yaml:"errorRate"`
+	MaxMeanLatency duration `yaml:"maxMeanLatency"`
 }
 
 type duration struct {
@@ -79,16 +87,21 @@ func Load(path string) (pulse.Test, error) {
 		return pulse.Test{}, err
 	}
 
-	if err := validateConfig(cfg); err != nil {
+	method := strings.ToUpper(strings.TrimSpace(cfg.Target.Method))
+
+	if err := validateConfig(cfg, method); err != nil {
 		return pulse.Test{}, err
 	}
 
 	client := newHTTPClient()
-	method := strings.ToUpper(strings.TrimSpace(cfg.Target.Method))
 	test := pulse.Test{
 		Config: pulse.Config{
 			Phases:         toPulsePhases(cfg.Phases),
 			MaxConcurrency: cfg.MaxConcurrency,
+			Thresholds: pulse.Thresholds{
+				ErrorRate:      cfg.Thresholds.ErrorRate,
+				MaxMeanLatency: cfg.Thresholds.MaxMeanLatency.Duration,
+			},
 		},
 		Scenario: func(ctx context.Context) error {
 			switch method {
@@ -105,7 +118,7 @@ func Load(path string) (pulse.Test, error) {
 	return test, nil
 }
 
-func validateConfig(cfg fileConfig) error {
+func validateConfig(cfg fileConfig, method string) error {
 	if len(cfg.Phases) == 0 {
 		return errNoPhases
 	}
@@ -114,9 +127,17 @@ func validateConfig(cfg fileConfig) error {
 		if strings.TrimSpace(phase.Type) == "" {
 			return errEmptyPhaseType
 		}
+
+		if phase.Duration.Duration <= 0 {
+			return errNonPositivePhase
+		}
+
+		if phase.ArrivalRate <= 0 {
+			return errNonPositiveRate
+		}
 	}
 
-	if strings.TrimSpace(cfg.Target.Method) == "" {
+	if method == "" {
 		return errEmptyTargetMethod
 	}
 
@@ -124,11 +145,11 @@ func validateConfig(cfg fileConfig) error {
 		return errEmptyTargetURL
 	}
 
-	switch strings.ToUpper(strings.TrimSpace(cfg.Target.Method)) {
+	switch method {
 	case "GET", "POST":
 		return nil
 	default:
-		return fmt.Errorf("%w: %s", errUnsupportedMethod, cfg.Target.Method)
+		return fmt.Errorf("%w: %s", errUnsupportedMethod, method)
 	}
 }
 
@@ -136,7 +157,7 @@ func toPulsePhases(phases []phaseConfig) []pulse.Phase {
 	result := make([]pulse.Phase, len(phases))
 	for i := range phases {
 		result[i] = pulse.Phase{
-			Type:        pulse.PhaseType(phases[i].Type),
+			Type:        pulse.PhaseType(strings.ToLower(strings.TrimSpace(phases[i].Type))),
 			Duration:    phases[i].Duration.Duration,
 			ArrivalRate: phases[i].ArrivalRate,
 		}
