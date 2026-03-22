@@ -78,6 +78,10 @@ func TestHTTPClientReturnsErrorForFailingStatusCode(t *testing.T) {
 	if code != http.StatusInternalServerError {
 		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, code)
 	}
+	var httpErr *HTTPStatusError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected *HTTPStatusError with 500, got %v", err)
+	}
 }
 
 func TestHTTPClientRespectsContextCancellation(t *testing.T) {

@@ -3,11 +3,9 @@ package metrics
 import (
 	"context"
 	"errors"
-	"strings"
-)
 
-// Prefix must match transport.HTTPClient when status is >= 400.
-const transportHTTPStatusErrPrefix = "transport: unexpected status code:"
+	"github.com/jmgo38/Pulse/transport"
+)
 
 // normalizeError maps an error to a stable category for ErrorCounts.
 // For err == nil it returns "" (caller must not count).
@@ -21,7 +19,8 @@ func normalizeError(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "deadline_exceeded"
 	}
-	if strings.HasPrefix(err.Error(), transportHTTPStatusErrPrefix) {
+	var httpErr *transport.HTTPStatusError
+	if errors.As(err, &httpErr) {
 		return "http_status_error"
 	}
 	return "unknown_error"

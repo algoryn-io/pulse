@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jmgo38/Pulse/transport"
 )
 
 func TestAggregatorResult(t *testing.T) {
@@ -186,9 +188,8 @@ func TestAggregatorStatusCountsOnSuccess(t *testing.T) {
 }
 
 func TestAggregatorStatusCountsRecordedAlongsideError(t *testing.T) {
-	msg := "transport: unexpected status code: 500"
 	a := NewAggregator()
-	a.Record(time.Millisecond, 500, errors.New(msg))
+	a.Record(time.Millisecond, 500, &transport.HTTPStatusError{StatusCode: 500})
 
 	r := a.Result(time.Second)
 	if r.StatusCounts[500] != 1 {
