@@ -9,26 +9,6 @@ import (
 	"testing"
 )
 
-func TestContextWithResponseStatusRecordsStatusCode(t *testing.T) {
-	var code int
-	ctx := ContextWithResponseStatus(context.Background(), &code)
-
-	client := &HTTPClient{
-		client: &http.Client{
-			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				return responseWithStatus(http.StatusAccepted, "x"), nil
-			}),
-		},
-	}
-
-	if err := client.Get(ctx, "http://pulse.test"); err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if code != http.StatusAccepted {
-		t.Fatalf("expected status %d, got %d", http.StatusAccepted, code)
-	}
-}
-
 func TestHTTPClientGetSuccess(t *testing.T) {
 	client := &HTTPClient{
 		client: &http.Client{
@@ -42,8 +22,12 @@ func TestHTTPClientGetSuccess(t *testing.T) {
 		},
 	}
 
-	if err := client.Get(context.Background(), "http://pulse.test"); err != nil {
+	code, err := client.Get(context.Background(), "http://pulse.test")
+	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
+	}
+	if code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, code)
 	}
 }
 
@@ -69,8 +53,12 @@ func TestHTTPClientPostSuccess(t *testing.T) {
 		},
 	}
 
-	if err := client.Post(context.Background(), "http://pulse.test", strings.NewReader("pulse")); err != nil {
+	code, err := client.Post(context.Background(), "http://pulse.test", strings.NewReader("pulse"))
+	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
+	}
+	if code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d", http.StatusCreated, code)
 	}
 }
 
@@ -83,8 +71,12 @@ func TestHTTPClientReturnsErrorForFailingStatusCode(t *testing.T) {
 		},
 	}
 
-	if err := client.Get(context.Background(), "http://pulse.test"); err == nil {
+	code, err := client.Get(context.Background(), "http://pulse.test")
+	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+	if code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, code)
 	}
 }
 
@@ -101,7 +93,10 @@ func TestHTTPClientRespectsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := client.Get(ctx, "http://pulse.test")
+	code, err := client.Get(ctx, "http://pulse.test")
+	if code != 0 {
+		t.Fatalf("expected status 0 before response, got %d", code)
+	}
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected %v, got %v", context.Canceled, err)
 	}

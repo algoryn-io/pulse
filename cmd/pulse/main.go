@@ -89,7 +89,7 @@ func runTest(args []string) (pulse.Result, error) {
 			},
 			MaxConcurrency: 5,
 		},
-		Scenario: func(ctx context.Context) error {
+		Scenario: func(ctx context.Context) (int, error) {
 			return client.Get(ctx, "https://httpbin.org/get")
 		},
 	}

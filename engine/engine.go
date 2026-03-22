@@ -8,18 +8,17 @@ import (
 	"github.com/jmgo38/Pulse/internal"
 	"github.com/jmgo38/Pulse/metrics"
 	"github.com/jmgo38/Pulse/scheduler"
-	"github.com/jmgo38/Pulse/transport"
 )
 
 // Engine executes a test definition.
 type Engine struct {
 	phases         []scheduler.Phase
-	scenario       func(context.Context) error
+	scenario       func(context.Context) (int, error)
 	maxConcurrency int
 }
 
 // New creates an engine for the given execution inputs.
-func New(phases []scheduler.Phase, scenario func(context.Context) error, maxConcurrency int) *Engine {
+func New(phases []scheduler.Phase, scenario func(context.Context) (int, error), maxConcurrency int) *Engine {
 	return &Engine{
 		phases:         phases,
 		scenario:       scenario,
@@ -70,11 +69,8 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 			defer wg.Done()
 			defer limiter.Release()
 
-			var statusCode int
-			ctx = transport.ContextWithResponseStatus(ctx, &statusCode)
-
 			executionStartedAt := time.Now()
-			err := e.scenario(ctx)
+			statusCode, err := e.scenario(ctx)
 			aggregator.Record(time.Since(executionStartedAt), statusCode, err)
 			setFirstErr(err)
 		}()

@@ -26,7 +26,8 @@ var (
 )
 
 // Scenario is the user-defined workload executed by Pulse.
-type Scenario func(ctx context.Context) error
+// The int is an HTTP or application status code; use 0 when not applicable.
+type Scenario func(ctx context.Context) (statusCode int, err error)
 
 // PhaseType describes how a phase should be executed.
 type PhaseType = model.PhaseType

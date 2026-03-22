@@ -9,7 +9,7 @@ import (
 
 func TestRunReturnsErrorWhenNoPhases(t *testing.T) {
 	test := Test{
-		Scenario: func(context.Context) error { return nil },
+		Scenario: func(context.Context) (int, error) { return 0, nil },
 	}
 
 	_, err := Run(test)
@@ -40,7 +40,7 @@ func TestRunReturnsErrorWhenPhaseDurationIsNotPositive(t *testing.T) {
 				{Type: PhaseTypeConstant, Duration: 0, ArrivalRate: 1},
 			},
 		},
-		Scenario: func(context.Context) error { return nil },
+		Scenario: func(context.Context) (int, error) { return 0, nil },
 	}
 
 	_, err := Run(test)
@@ -56,7 +56,7 @@ func TestRunReturnsErrorWhenPhaseTypeIsEmpty(t *testing.T) {
 				{Type: "", Duration: time.Second, ArrivalRate: 1},
 			},
 		},
-		Scenario: func(context.Context) error { return nil },
+		Scenario: func(context.Context) (int, error) { return 0, nil },
 	}
 
 	_, err := Run(test)
@@ -72,7 +72,7 @@ func TestRunReturnsErrorWhenPhaseTypeIsUnsupported(t *testing.T) {
 				{Type: PhaseType("custom"), Duration: time.Second, ArrivalRate: 1},
 			},
 		},
-		Scenario: func(context.Context) error { return nil },
+		Scenario: func(context.Context) (int, error) { return 0, nil },
 	}
 
 	_, err := Run(test)
@@ -88,7 +88,7 @@ func TestRunReturnsErrorWhenPhaseArrivalRateIsNotPositive(t *testing.T) {
 				{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 0},
 			},
 		},
-		Scenario: func(context.Context) error { return nil },
+		Scenario: func(context.Context) (int, error) { return 0, nil },
 	}
 
 	_, err := Run(test)
@@ -104,7 +104,7 @@ func TestRunReturnsErrorWhenRampEndpointsAreInvalid(t *testing.T) {
 				{Type: PhaseTypeRamp, Duration: time.Second, From: 0, To: 5},
 			},
 		},
-		Scenario: func(context.Context) error { return nil },
+		Scenario: func(context.Context) (int, error) { return 0, nil },
 	}
 
 	_, err := Run(test)
@@ -122,9 +122,9 @@ func TestRunExecutesRampPhase(t *testing.T) {
 			},
 			MaxConcurrency: 2,
 		},
-		Scenario: func(context.Context) error {
+		Scenario: func(context.Context) (int, error) {
 			calls++
-			return nil
+			return 0, nil
 		},
 	}
 
@@ -146,9 +146,9 @@ func TestRunExecutesScenario(t *testing.T) {
 			},
 			MaxConcurrency: 4,
 		},
-		Scenario: func(context.Context) error {
+		Scenario: func(context.Context) (int, error) {
 			calls++
-			return nil
+			return 0, nil
 		},
 	}
 
@@ -195,8 +195,8 @@ func TestRunPropagatesScenarioError(t *testing.T) {
 			},
 			MaxConcurrency: 4,
 		},
-		Scenario: func(context.Context) error {
-			return wantErr
+		Scenario: func(context.Context) (int, error) {
+			return 0, wantErr
 		},
 	}
 
@@ -234,9 +234,9 @@ func TestRunPassesThresholds(t *testing.T) {
 				MaxMeanLatency: 50 * time.Millisecond,
 			},
 		},
-		Scenario: func(context.Context) error {
+		Scenario: func(context.Context) (int, error) {
 			time.Sleep(5 * time.Millisecond)
-			return nil
+			return 0, nil
 		},
 	}
 
@@ -262,9 +262,9 @@ func TestRunFailsWhenThresholdsAreViolated(t *testing.T) {
 				MaxMeanLatency: time.Millisecond,
 			},
 		},
-		Scenario: func(context.Context) error {
+		Scenario: func(context.Context) (int, error) {
 			time.Sleep(5 * time.Millisecond)
-			return errors.New("scenario failed")
+			return 0, errors.New("scenario failed")
 		},
 	}
 
