@@ -2,173 +2,168 @@
 
 **Pulse** is a programmable reliability and load testing engine written in Go.
 
-It allows developers to define load tests directly in Go code, execute them with a deterministic engine, and analyze system behavior under controlled stress conditions.
-
-Unlike traditional tools that rely on external configuration languages (YAML/JS), Pulse follows a **code-first approach**, enabling full use of Go's type system, tooling, and testing ecosystem.
+It generates controlled HTTP load against a target, collects latency and error metrics, and evaluates configurable pass/fail thresholds. Tests are driven by a YAML config file and executed through the `pulse` CLI.
 
 ---
 
-## Vision
+## Features
 
-Pulse is designed to evolve beyond a simple load generator into a **platform for reliability experimentation**.
-
-The long-term goal is to provide a programmable environment where engineers can:
-
-- Generate controlled system load
-- Experiment with failure scenarios
-- Analyze latency behavior under stress
-- Explore system resilience under degraded conditions
-
-The initial version focuses on building a **deterministic, extensible execution engine**.
+- **Arrival-rate scheduling** — request-driven load (requests/sec), with constant and ramp phases (not user/VU-based)
+- **Bounded concurrency** — configurable goroutine limit prevents runaway resource usage
+- **Metrics aggregation** — total, failed, RPS, latency (min, mean, p50, p95, p99, max), status code distribution, normalized error categories
+- **Thresholds** — `error_rate` and `mean_latency` with PASS / FAIL output
+- **HTTP transport** — GET and POST support via `net/http`
+- **CLI** — `pulse run <config.yaml>` with human-readable text and JSON output modes
 
 ---
 
-## Features (MVP)
+## Usage
 
-Current goals for the initial version include:
+### 1. Write a config file
 
-- Deterministic load generation
-- Arrival-rate based scheduling
-- Programmable scenarios using Go
-- Built-in metrics aggregation
-- Latency percentiles (p50, p95, p99)
-- JSON result output
-- CLI execution
+```yaml
+phases:
+  - type: constant
+    duration: 30s
+    arrivalRate: 50
 
-Future capabilities may include:
+  - type: ramp
+    duration: 30s
+    from: 10
+    to: 100
 
-- Fault injection (latency, errors)
-- Chaos experimentation modules
-- Additional transports (gRPC, TCP)
-- Observability integrations
-- Distributed execution
+target:
+  method: GET
+  url: https://api.example.com/health
+
+maxConcurrency: 100
+
+thresholds:
+  errorRate: 0.01       # fail if error rate exceeds 1%
+  maxMeanLatency: 200ms # fail if mean latency exceeds 200ms
+```
+
+### 2. Run the test
+
+```sh
+pulse run config.yaml
+```
+
+Optional flags:
+
+| Flag | Description |
+|---|---|
+| `--json` | Print results as JSON to stdout |
+| `--out <file>` | Write JSON results to a file |
 
 ---
 
-## Example
+## Example output
 
-```go
-package main
+**Text (default):**
 
-import (
-	"context"
-	"time"
+```
+Total requests: 2250
+Failed requests: 12
+Duration: 1m0.41s
+RPS: 37.25
 
-	"github.com/jmgo38/pulse"
-)
+Min latency: 18ms
+P50 latency: 45ms
+Mean latency: 52ms
+P95 latency: 134ms
+P99 latency: 198ms
+Max latency: 312ms
 
-func main() {
-	test := pulse.Test{
-		Phases: []pulse.Phase{
-			pulse.ConstantRate(100, 10*time.Second),
-		},
-		Scenario: func(ctx context.Context) error {
-			// Example request
-			// http.Get("https://api.example.com")
-			return nil
-		},
-	}
+Status codes:
+  200: 2238
+  503: 12
 
-	result, err := pulse.Run(test)
-	if err != nil {
-		panic(err)
-	}
+Errors:
+  http_status_error: 12
 
-	println("Total Requests:", result.TotalRequests)
-	println("Errors:", result.TotalErrors)
+Thresholds:
+  PASS error_rate < 0.01
+  PASS mean_latency < 200ms
+```
+
+**JSON (`--json`):**
+
+```json
+{
+  "Total": 2250,
+  "Failed": 12,
+  "Duration": 60410000000,
+  "RPS": 37.25,
+  "Latency": {
+    "Min": 18000000,
+    "Mean": 52000000,
+    "P50": 45000000,
+    "P95": 134000000,
+    "P99": 198000000,
+    "Max": 312000000
+  },
+  "StatusCounts": { "200": 2238, "503": 12 },
+  "ErrorCounts": { "http_status_error": 12 }
 }
 ```
 
----
-
-## Architecture Overview
-
-Pulse is structured around a small set of core components:
-
-```mermaid
-flowchart TD
-    A[Test] --> B[Engine]
-    B --> C[Scheduler]
-    C --> D[Scenario Execution]
-    D --> E[Transport]
-    E --> F[Metrics Aggregator]
-    F --> G[Result]
-```
+> **Note:** durations in JSON are encoded in nanoseconds (Go `time.Duration` default representation).
 
 ---
 
-## Core Concepts
-
-| Component | Responsibility                                          |
-| --------- | ------------------------------------------------------- |
-| Engine    | Orchestrates test lifecycle                             |
-| Scheduler | Generates execution events based on arrival rate        |
-| Scenario  | Defines the behavior executed by each virtual execution |
-| Transport | Executes external operations (HTTP in MVP)              |
-| Metrics   | Aggregates latency and error statistics                 |
-
----
-
-## Project Structure
+## Architecture
 
 ```
-pulse/
-├── cmd/pulse/        # CLI entry point
-├── engine/           # Test lifecycle orchestration
-├── scheduler/        # Arrival-rate scheduling
-├── metrics/          # Metrics aggregation and percentiles
-├── scenario/         # Scenario definitions
-├── transport/        # HTTP transport implementation
-├── internal/         # Internal utilities (clock, concurrency, token bucket)
-├── pulse.go          # Public API (Test, Run, Result)
-├── go.mod
-└── README.md
+pulse run config.yaml
+        │
+        ▼
+   config.Load()          Parses YAML → pulse.Test
+        │
+        ▼
+    pulse.Run()           Validates inputs, evaluates thresholds
+        │
+        ▼
+    engine.Run()          Orchestrates phases and concurrency
+        │
+        ▼
+  scheduler.Run()         Fires scenario calls at the target arrival rate
+  (constant / ramp)
+        │
+        ▼
+   Scenario func          Executes the HTTP request via transport.HTTPClient
+        │
+        ▼
+  metrics.Aggregator      Records latency, status code, and error per call
+        │
+        ▼
+    pulse.Result          Returned to the CLI for text or JSON rendering
 ```
 
----
+### Components
 
-## Design Principles
-
-Pulse is built around the following principles:
-
-**Code-first configuration**
-
-Tests are defined in Go, allowing:
-- type safety
-- IDE support
-- composability
-- integration with Go tests
-
-**Deterministic execution**
-
-The engine aims to produce statistically consistent results when executed under similar conditions.
-
-**Explicit concurrency model**
-
-Concurrency is controlled through bounded goroutines and a scheduler-driven execution model.
-
-**Minimal dependencies**
-
-Pulse is designed to remain lightweight and easy to embed.
+| Package | Responsibility |
+|---|---|
+| `pulse` (root) | Public API — `Test`, `Config`, `Phase`, `Run`, `Result` |
+| `engine` | Runs phases in sequence; manages goroutine lifecycle and concurrency limiter |
+| `scheduler` | Fires scenario calls at the configured arrival rate (ticker for constant, interpolated interval for ramp) |
+| `metrics` | Thread-safe aggregation of latency, status codes, and normalized error categories |
+| `transport` | Minimal HTTP client (GET / POST) built on `net/http` |
+| `config` | YAML loader — maps file config to `pulse.Test` |
+| `internal` | Concurrency limiter (semaphore) |
 
 ---
 
-## Status
+## Roadmap
 
-Pulse is currently under active development.
-
-APIs may change during early versions as the core architecture stabilizes.
-
----
-
-## Contributing
-
-Contributions are welcome.
-
-If you have ideas for improvements, experiments, or transports, feel free to open an issue or submit a pull request.
+- **Token bucket scheduler** — smoother burst control for constant and ramp phases (stub exists in `internal/tokenbucket.go`)
+- **Additional phase types** — step, spike
+- **More HTTP methods** — PUT, DELETE, PATCH
+- **Export formats** — CSV, OpenTelemetry
+- **gRPC transport**
 
 ---
 
 ## License
 
-MIT License
+MIT
