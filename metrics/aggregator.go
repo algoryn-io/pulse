@@ -45,16 +45,14 @@ func (a *Aggregator) Record(latency time.Duration, statusCode int, err error) {
 	defer a.mu.Unlock()
 
 	a.total++
+	if statusCode != 0 {
+		a.statusCounts[statusCode]++
+	}
 	if err != nil {
 		a.failed++
 		a.errorCounts[err.Error()]++
-	} else {
-		if statusCode != 0 {
-			a.statusCounts[statusCode]++
-		}
-		if statusCode >= 400 {
-			a.failed++
-		}
+	} else if statusCode >= 400 {
+		a.failed++
 	}
 
 	a.meanNanos += (float64(latency.Nanoseconds()) - a.meanNanos) / float64(a.total)

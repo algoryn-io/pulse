@@ -52,7 +52,7 @@ func TestAggregatorResult(t *testing.T) {
 		t.Fatalf("expected errorCounts failed=1, got %+v", result.ErrorCounts)
 	}
 	if result.StatusCounts != nil {
-		t.Fatalf("expected no status counts when err path, got %+v", result.StatusCounts)
+		t.Fatalf("expected no non-zero status codes in this test, got %+v", result.StatusCounts)
 	}
 }
 
@@ -185,19 +185,33 @@ func TestAggregatorStatusCountsOnSuccess(t *testing.T) {
 	}
 }
 
-func TestAggregatorErrorPathDoesNotIncrementStatusCounts(t *testing.T) {
+func TestAggregatorStatusCountsRecordedAlongsideError(t *testing.T) {
+	msg := "transport: unexpected status code: 500"
 	a := NewAggregator()
-	a.Record(time.Millisecond, 500, errors.New("transport: unexpected status code: 500"))
+	a.Record(time.Millisecond, 500, errors.New(msg))
 
 	r := a.Result(time.Second)
-	if r.StatusCounts != nil && len(r.StatusCounts) > 0 {
-		t.Fatalf("expected no status counts on error path, got %+v", r.StatusCounts)
+	if r.StatusCounts[500] != 1 {
+		t.Fatalf("expected status 500 counted with error, got %+v", r.StatusCounts)
 	}
-	if r.ErrorCounts["transport: unexpected status code: 500"] != 1 {
+	if r.ErrorCounts[msg] != 1 {
 		t.Fatalf("unexpected errorCounts: %+v", r.ErrorCounts)
 	}
 	if r.Failed != 1 {
 		t.Fatalf("expected 1 failed, got %d", r.Failed)
+	}
+}
+
+func TestAggregatorErrorWithoutStatusCodeHasNoStatusCount(t *testing.T) {
+	a := NewAggregator()
+	a.Record(time.Millisecond, 0, errors.New("network down"))
+
+	r := a.Result(time.Second)
+	if r.StatusCounts != nil {
+		t.Fatalf("expected no status counts when code is 0, got %+v", r.StatusCounts)
+	}
+	if r.ErrorCounts["network down"] != 1 || r.Failed != 1 {
+		t.Fatalf("expected error path, failed=%d err=%+v", r.Failed, r.ErrorCounts)
 	}
 }
 
