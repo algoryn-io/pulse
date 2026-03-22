@@ -53,8 +53,10 @@ type targetConfig struct {
 }
 
 type thresholdsConfig struct {
-	ErrorRate      float64  `yaml:"errorRate"`
-	MaxMeanLatency duration `yaml:"maxMeanLatency"`
+	ErrorRate       float64  `yaml:"errorRate"`
+	MaxMeanLatency  duration `yaml:"maxMeanLatency"`
+	MaxP95Latency   duration `yaml:"maxP95Latency"`
+	MaxP99Latency   duration `yaml:"maxP99Latency"`
 }
 
 type duration struct {
@@ -103,8 +105,10 @@ func Load(path string) (pulse.Test, error) {
 			Phases:         toPulsePhases(cfg.Phases),
 			MaxConcurrency: cfg.MaxConcurrency,
 			Thresholds: pulse.Thresholds{
-				ErrorRate:      cfg.Thresholds.ErrorRate,
-				MaxMeanLatency: cfg.Thresholds.MaxMeanLatency.Duration,
+				ErrorRate:       cfg.Thresholds.ErrorRate,
+				MaxMeanLatency:  cfg.Thresholds.MaxMeanLatency.Duration,
+				MaxP95Latency:   cfg.Thresholds.MaxP95Latency.Duration,
+				MaxP99Latency:   cfg.Thresholds.MaxP99Latency.Duration,
 			},
 		},
 		Scenario: func(ctx context.Context) (int, error) {

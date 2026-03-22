@@ -24,6 +24,8 @@ var (
 	errNegativeErrorRate      = errors.New("pulse: threshold error rate must not be negative")
 	errErrorRateAboveOne      = errors.New("pulse: threshold error rate must not be greater than 1")
 	errNegativeMeanLatency    = errors.New("pulse: threshold mean latency must not be negative")
+	errNegativeP95Latency     = errors.New("pulse: threshold p95 latency must not be negative")
+	errNegativeP99Latency     = errors.New("pulse: threshold p99 latency must not be negative")
 )
 
 // Scenario is the user-defined workload executed by Pulse.
@@ -62,8 +64,10 @@ func (p Phase) IsRamp() bool {
 
 // Thresholds define basic pass/fail conditions for a run.
 type Thresholds struct {
-	ErrorRate      float64
-	MaxMeanLatency time.Duration
+	ErrorRate       float64
+	MaxMeanLatency  time.Duration
+	MaxP95Latency   time.Duration
+	MaxP99Latency   time.Duration
 }
 
 // Config holds execution configuration for a test.
@@ -189,6 +193,14 @@ func validateTest(test Test) error {
 		return errNegativeMeanLatency
 	}
 
+	if test.Config.Thresholds.MaxP95Latency < 0 {
+		return errNegativeP95Latency
+	}
+
+	if test.Config.Thresholds.MaxP99Latency < 0 {
+		return errNegativeP99Latency
+	}
+
 	return nil
 }
 
@@ -224,6 +236,34 @@ func evaluateThresholds(thresholds Thresholds, result Result) ([]ThresholdOutcom
 				"pulse: threshold mean latency violated: got %v, limit %v",
 				result.Latency.Mean,
 				thresholds.MaxMeanLatency,
+			))
+		} else {
+			outcomes = append(outcomes, ThresholdOutcome{Pass: true, Description: desc})
+		}
+	}
+
+	if thresholds.MaxP95Latency > 0 {
+		desc := fmt.Sprintf("p95_latency < %v", thresholds.MaxP95Latency)
+		if result.Latency.P95 > thresholds.MaxP95Latency {
+			outcomes = append(outcomes, ThresholdOutcome{Pass: false, Description: desc})
+			errs = append(errs, fmt.Errorf(
+				"pulse: threshold p95 latency violated: got %v, limit %v",
+				result.Latency.P95,
+				thresholds.MaxP95Latency,
+			))
+		} else {
+			outcomes = append(outcomes, ThresholdOutcome{Pass: true, Description: desc})
+		}
+	}
+
+	if thresholds.MaxP99Latency > 0 {
+		desc := fmt.Sprintf("p99_latency < %v", thresholds.MaxP99Latency)
+		if result.Latency.P99 > thresholds.MaxP99Latency {
+			outcomes = append(outcomes, ThresholdOutcome{Pass: false, Description: desc})
+			errs = append(errs, fmt.Errorf(
+				"pulse: threshold p99 latency violated: got %v, limit %v",
+				result.Latency.P99,
+				thresholds.MaxP99Latency,
 			))
 		} else {
 			outcomes = append(outcomes, ThresholdOutcome{Pass: true, Description: desc})

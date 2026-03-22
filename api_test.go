@@ -323,3 +323,146 @@ func TestRunFailsWhenThresholdsAreViolated(t *testing.T) {
 		}
 	}
 }
+
+func TestRunReturnsErrorWhenThresholdMaxP95LatencyIsNegative(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1},
+			},
+			Thresholds: Thresholds{MaxP95Latency: -time.Millisecond},
+		},
+		Scenario: func(context.Context) (int, error) { return 0, nil },
+	}
+
+	_, err := Run(test)
+	if err != errNegativeP95Latency {
+		t.Fatalf("expected %v, got %v", errNegativeP95Latency, err)
+	}
+}
+
+func TestRunReturnsErrorWhenThresholdMaxP99LatencyIsNegative(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1},
+			},
+			Thresholds: Thresholds{MaxP99Latency: -time.Millisecond},
+		},
+		Scenario: func(context.Context) (int, error) { return 0, nil },
+	}
+
+	_, err := Run(test)
+	if err != errNegativeP99Latency {
+		t.Fatalf("expected %v, got %v", errNegativeP99Latency, err)
+	}
+}
+
+func TestRunPassesP95AndP99Thresholds(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: 120 * time.Millisecond, ArrivalRate: 20},
+			},
+			MaxConcurrency: 2,
+			Thresholds: Thresholds{
+				MaxP95Latency: 50 * time.Millisecond,
+				MaxP99Latency: 50 * time.Millisecond,
+			},
+		},
+		Scenario: func(context.Context) (int, error) {
+			time.Sleep(5 * time.Millisecond)
+			return 0, nil
+		},
+	}
+
+	got, err := Run(test)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(got.ThresholdOutcomes) != 2 {
+		t.Fatalf("expected 2 threshold outcomes, got %+v", got.ThresholdOutcomes)
+	}
+	want := []ThresholdOutcome{
+		{Pass: true, Description: "p95_latency < 50ms"},
+		{Pass: true, Description: "p99_latency < 50ms"},
+	}
+	for i := range want {
+		if got.ThresholdOutcomes[i] != want[i] {
+			t.Fatalf("outcome %d: want %+v, got %+v", i, want[i], got.ThresholdOutcomes[i])
+		}
+	}
+}
+
+func TestRunFailsWhenP95ThresholdViolated(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: 200 * time.Millisecond, ArrivalRate: 15},
+			},
+			MaxConcurrency: 2,
+			Thresholds: Thresholds{
+				MaxP95Latency: 2 * time.Millisecond,
+			},
+		},
+		Scenario: func(context.Context) (int, error) {
+			time.Sleep(10 * time.Millisecond)
+			return 0, nil
+		},
+	}
+
+	got, err := Run(test)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	if len(got.ThresholdOutcomes) != 1 {
+		t.Fatalf("expected 1 threshold outcome, got %+v", got.ThresholdOutcomes)
+	}
+	want := ThresholdOutcome{Pass: false, Description: "p95_latency < 2ms"}
+	if got.ThresholdOutcomes[0] != want {
+		t.Fatalf("want %+v, got %+v", want, got.ThresholdOutcomes[0])
+	}
+}
+
+func TestRunThresholdOutcomesStableOrderWhenAllSet(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: 120 * time.Millisecond, ArrivalRate: 20},
+			},
+			MaxConcurrency: 2,
+			Thresholds: Thresholds{
+				ErrorRate:      0.5,
+				MaxMeanLatency: 50 * time.Millisecond,
+				MaxP95Latency:  50 * time.Millisecond,
+				MaxP99Latency:  50 * time.Millisecond,
+			},
+		},
+		Scenario: func(context.Context) (int, error) {
+			time.Sleep(5 * time.Millisecond)
+			return 0, nil
+		},
+	}
+
+	got, err := Run(test)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	want := []ThresholdOutcome{
+		{Pass: true, Description: "error_rate < 0.5"},
+		{Pass: true, Description: "mean_latency < 50ms"},
+		{Pass: true, Description: "p95_latency < 50ms"},
+		{Pass: true, Description: "p99_latency < 50ms"},
+	}
+	if len(got.ThresholdOutcomes) != len(want) {
+		t.Fatalf("expected %d outcomes, got %+v", len(want), got.ThresholdOutcomes)
+	}
+	for i := range want {
+		if got.ThresholdOutcomes[i] != want[i] {
+			t.Fatalf("outcome %d: want %+v, got %+v", i, want[i], got.ThresholdOutcomes[i])
+		}
+	}
+}

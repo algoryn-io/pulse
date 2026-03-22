@@ -98,7 +98,9 @@ func TestLoadMapsThresholds(t *testing.T) {
 		"  url: https://httpbin.org/get\n" +
 		"thresholds:\n" +
 		"  errorRate: 0.05\n" +
-		"  maxMeanLatency: 200ms\n"
+		"  maxMeanLatency: 200ms\n" +
+		"  maxP95Latency: 300ms\n" +
+		"  maxP99Latency: 500ms\n"
 
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -115,6 +117,14 @@ func TestLoadMapsThresholds(t *testing.T) {
 
 	if test.Config.Thresholds.MaxMeanLatency != 200*time.Millisecond {
 		t.Fatalf("expected mean latency 200ms, got %v", test.Config.Thresholds.MaxMeanLatency)
+	}
+
+	if test.Config.Thresholds.MaxP95Latency != 300*time.Millisecond {
+		t.Fatalf("expected p95 latency 300ms, got %v", test.Config.Thresholds.MaxP95Latency)
+	}
+
+	if test.Config.Thresholds.MaxP99Latency != 500*time.Millisecond {
+		t.Fatalf("expected p99 latency 500ms, got %v", test.Config.Thresholds.MaxP99Latency)
 	}
 }
 
