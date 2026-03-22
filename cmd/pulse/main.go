@@ -133,6 +133,7 @@ func writeText(w io.Writer, result pulse.Result) {
 	fmt.Fprintf(w, "Total requests: %d\n", result.Total)
 	fmt.Fprintf(w, "Failed requests: %d\n", result.Failed)
 	fmt.Fprintf(w, "Duration: %v\n", result.Duration)
+	fmt.Fprintf(w, "RPS: %.2f\n", result.RPS)
 
 	fmt.Fprintf(w, "Min latency: %v\n", result.Latency.Min)
 	fmt.Fprintf(w, "P50 latency: %v\n", result.Latency.P50)

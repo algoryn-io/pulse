@@ -32,6 +32,7 @@ func TestRunPrintsResults(t *testing.T) {
 			Total:    15,
 			Failed:   2,
 			Duration: 3 * time.Second,
+			RPS:      5,
 			Latency: pulse.LatencyStats{
 				Min:  10 * time.Millisecond,
 				Max:  40 * time.Millisecond,
@@ -52,6 +53,7 @@ func TestRunPrintsResults(t *testing.T) {
 		"Total requests: 15\n" +
 		"Failed requests: 2\n" +
 		"Duration: 3s\n" +
+		"RPS: 5.00\n" +
 		"Min latency: 10ms\n" +
 		"P50 latency: 20ms\n" +
 		"Mean latency: 25ms\n" +
@@ -76,6 +78,7 @@ func TestRunPrintsResultsWhenExecutionFails(t *testing.T) {
 			Total:    4,
 			Failed:   1,
 			Duration: time.Second,
+			RPS:      4,
 			Latency: pulse.LatencyStats{
 				Min:  100 * time.Millisecond,
 				Max:  300 * time.Millisecond,
@@ -97,6 +100,7 @@ func TestRunPrintsResultsWhenExecutionFails(t *testing.T) {
 		"Total requests: 4\n" +
 		"Failed requests: 1\n" +
 		"Duration: 1s\n" +
+		"RPS: 4.00\n" +
 		"Min latency: 100ms\n" +
 		"P50 latency: 150ms\n" +
 		"Mean latency: 200ms\n" +
@@ -160,6 +164,7 @@ func TestRunWritesJSONToFile(t *testing.T) {
 			Total:    8,
 			Failed:   2,
 			Duration: time.Second,
+			RPS:      8,
 			Latency: pulse.LatencyStats{
 				Min:  5 * time.Millisecond,
 				Max:  25 * time.Millisecond,
@@ -197,6 +202,7 @@ func TestRunWritesJSONToFile(t *testing.T) {
 		"Total requests: 8\n" +
 		"Failed requests: 2\n" +
 		"Duration: 1s\n" +
+		"RPS: 8.00\n" +
 		"Min latency: 5ms\n" +
 		"P50 latency: 14ms\n" +
 		"Mean latency: 15ms\n" +
