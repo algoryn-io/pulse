@@ -40,6 +40,17 @@ func NewTokenBucket(capacity int, refillRate float64) *TokenBucket {
 	}
 }
 
+// NewDrainedTokenBucket is like NewTokenBucket but starts with zero tokens.
+// Refill rate and capacity are unchanged; emissions pace from the first Allow
+// instead of consuming an initial full bucket in one burst.
+func NewDrainedTokenBucket(capacity int, refillRate float64) *TokenBucket {
+	tb := NewTokenBucket(capacity, refillRate)
+	tb.mu.Lock()
+	tb.tokens = 0
+	tb.mu.Unlock()
+	return tb
+}
+
 // Allow refills tokens based on elapsed time since the last call, then
 // consumes one token if available. It returns true when the request is
 // allowed, false when the bucket is empty.

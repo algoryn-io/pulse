@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jmgo38/Pulse/internal"
 	"github.com/jmgo38/Pulse/model"
 )
 
@@ -43,21 +44,37 @@ func Run(ctx context.Context, phase Phase, scenario func(context.Context) error)
 }
 
 func runConstant(ctx context.Context, phase Phase, scenario func(context.Context) error) error {
-	interval := time.Second / time.Duration(phase.ArrivalRate)
-	ticker := time.NewTicker(interval)
-	timer := time.NewTimer(phase.Duration)
-	defer ticker.Stop()
-	defer timer.Stop()
+	capacity := phase.ArrivalRate
+	if capacity < 1 {
+		capacity = 1
+	}
+	// Drained start avoids bursting the whole capacity before the engine limiter
+	// can apply backpressure (wrappedScenario returns before work finishes).
+	bucket := internal.NewDrainedTokenBucket(capacity, float64(phase.ArrivalRate))
+	deadline := time.Now().Add(phase.Duration)
+	poll := time.Millisecond
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-timer.C:
+		default:
+		}
+
+		now := time.Now()
+		if !now.Before(deadline) {
 			return nil
-		case <-ticker.C:
+		}
+
+		if bucket.Allow(now) {
 			if err := scenario(ctx); err != nil {
 				return err
+			}
+		} else {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(poll):
 			}
 		}
 	}

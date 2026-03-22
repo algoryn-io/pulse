@@ -148,6 +148,7 @@ func TestRunExecutesScenario(t *testing.T) {
 		},
 		Scenario: func(context.Context) (int, error) {
 			calls++
+			time.Sleep(5 * time.Millisecond)
 			return 0, nil
 		},
 	}
@@ -210,6 +211,7 @@ func TestRunRecordsScenarioErrorsWithoutAborting(t *testing.T) {
 			MaxConcurrency: 4,
 		},
 		Scenario: func(context.Context) (int, error) {
+			time.Sleep(5 * time.Millisecond)
 			return 0, wantErr
 		},
 	}
@@ -300,12 +302,12 @@ func TestRunFailsWhenThresholdsAreViolated(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 
-	if got.Total != 1 {
-		t.Fatalf("expected total 1, got %d", got.Total)
+	if got.Total < 1 {
+		t.Fatalf("expected at least one execution, got %d", got.Total)
 	}
 
-	if got.Failed != 1 {
-		t.Fatalf("expected failed 1, got %d", got.Failed)
+	if got.Failed != got.Total {
+		t.Fatalf("expected all executions failed, total %d failed %d", got.Total, got.Failed)
 	}
 
 	if len(got.ThresholdOutcomes) != 2 {
