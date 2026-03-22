@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"time"
 
 	pulse "github.com/jmgo38/Pulse"
@@ -141,6 +142,32 @@ func writeText(w io.Writer, result pulse.Result) {
 	fmt.Fprintf(w, "P95 latency: %v\n", result.Latency.P95)
 	fmt.Fprintf(w, "P99 latency: %v\n", result.Latency.P99)
 	fmt.Fprintf(w, "Max latency: %v\n", result.Latency.Max)
+
+	if len(result.StatusCounts) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Status codes:")
+		codes := make([]int, 0, len(result.StatusCounts))
+		for code := range result.StatusCounts {
+			codes = append(codes, code)
+		}
+		sort.Ints(codes)
+		for _, code := range codes {
+			fmt.Fprintf(w, "  %d: %d\n", code, result.StatusCounts[code])
+		}
+	}
+
+	if len(result.ErrorCounts) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Errors:")
+		keys := make([]string, 0, len(result.ErrorCounts))
+		for k := range result.ErrorCounts {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(w, "  %s: %d\n", k, result.ErrorCounts[k])
+		}
+	}
 }
 
 func writeJSON(w io.Writer, result pulse.Result) error {
