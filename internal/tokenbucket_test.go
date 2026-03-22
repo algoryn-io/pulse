@@ -8,6 +8,17 @@ import (
 // t0 is a fixed base time used across tests for readability.
 var t0 = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
+func TestTokenBucket_NewDrainedTokenBucketStartsEmpty(t *testing.T) {
+	tb := NewDrainedTokenBucket(5, 10)
+	if tb.Allow(t0) {
+		t.Fatal("expected first Allow to be false on drained bucket")
+	}
+	// 100ms at 10 tok/s → 1 token
+	if !tb.Allow(t0.Add(100 * time.Millisecond)) {
+		t.Fatal("expected Allow true after refill interval")
+	}
+}
+
 func TestTokenBucket_NewBucketStartsFull(t *testing.T) {
 	tb := NewTokenBucket(5, 1)
 	for i := 0; i < 5; i++ {
