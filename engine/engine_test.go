@@ -65,8 +65,8 @@ func TestEngineRunRecordsScenarioErrorsWithoutAborting(t *testing.T) {
 		t.Fatalf("expected all executions failed, total %d failed %d", result.Total, result.Failed)
 	}
 
-	if result.ErrorCounts[wantErr.Error()] != result.Total {
-		t.Fatalf("expected errorCounts to match failures, got %+v total %d", result.ErrorCounts, result.Total)
+	if result.ErrorCounts["unknown_error"] != result.Total {
+		t.Fatalf("expected unknown_error counts to match failures, got %+v total %d", result.ErrorCounts, result.Total)
 	}
 }
 

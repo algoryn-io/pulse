@@ -50,7 +50,7 @@ func (a *Aggregator) Record(latency time.Duration, statusCode int, err error) {
 	}
 	if err != nil {
 		a.failed++
-		a.errorCounts[err.Error()]++
+		a.errorCounts[normalizeError(err)]++
 	} else if statusCode >= 400 {
 		a.failed++
 	}

@@ -48,8 +48,8 @@ func TestAggregatorResult(t *testing.T) {
 		t.Fatalf("expected p99 30ms, got %v", result.Latency.P99)
 	}
 
-	if len(result.ErrorCounts) != 1 || result.ErrorCounts["failed"] != 1 {
-		t.Fatalf("expected errorCounts failed=1, got %+v", result.ErrorCounts)
+	if len(result.ErrorCounts) != 1 || result.ErrorCounts["unknown_error"] != 1 {
+		t.Fatalf("expected errorCounts unknown_error=1, got %+v", result.ErrorCounts)
 	}
 	if result.StatusCounts != nil {
 		t.Fatalf("expected no non-zero status codes in this test, got %+v", result.StatusCounts)
@@ -114,8 +114,8 @@ func TestAggregatorConcurrentRecord(t *testing.T) {
 		t.Fatalf("expected p99 40ms, got %v", result.Latency.P99)
 	}
 
-	if result.ErrorCounts["boom"] != 2 {
-		t.Fatalf("expected errorCounts boom=2, got %+v", result.ErrorCounts)
+	if result.ErrorCounts["unknown_error"] != 2 {
+		t.Fatalf("expected errorCounts unknown_error=2, got %+v", result.ErrorCounts)
 	}
 }
 
@@ -194,7 +194,7 @@ func TestAggregatorStatusCountsRecordedAlongsideError(t *testing.T) {
 	if r.StatusCounts[500] != 1 {
 		t.Fatalf("expected status 500 counted with error, got %+v", r.StatusCounts)
 	}
-	if r.ErrorCounts[msg] != 1 {
+	if r.ErrorCounts["http_status_error"] != 1 {
 		t.Fatalf("unexpected errorCounts: %+v", r.ErrorCounts)
 	}
 	if r.Failed != 1 {
@@ -210,7 +210,7 @@ func TestAggregatorErrorWithoutStatusCodeHasNoStatusCount(t *testing.T) {
 	if r.StatusCounts != nil {
 		t.Fatalf("expected no status counts when code is 0, got %+v", r.StatusCounts)
 	}
-	if r.ErrorCounts["network down"] != 1 || r.Failed != 1 {
+	if r.ErrorCounts["unknown_error"] != 1 || r.Failed != 1 {
 		t.Fatalf("expected error path, failed=%d err=%+v", r.Failed, r.ErrorCounts)
 	}
 }
@@ -245,10 +245,10 @@ func TestAggregatorResultReturnsCopiedErrorCountsMap(t *testing.T) {
 	a.Record(time.Millisecond, 0, errors.New("boom"))
 
 	r := a.Result(time.Second)
-	r.ErrorCounts["boom"] = 99
+	r.ErrorCounts["unknown_error"] = 99
 
 	r2 := a.Result(time.Second)
-	if r2.ErrorCounts["boom"] != 1 {
+	if r2.ErrorCounts["unknown_error"] != 1 {
 		t.Fatalf("internal errorCounts mutated via snapshot, got %+v", r2.ErrorCounts)
 	}
 }
