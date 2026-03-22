@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"errors"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -213,6 +214,23 @@ func TestAggregatorErrorWithoutStatusCodeHasNoStatusCount(t *testing.T) {
 	}
 	if r.ErrorCounts["unknown_error"] != 1 || r.Failed != 1 {
 		t.Fatalf("expected error path, failed=%d err=%+v", r.Failed, r.ErrorCounts)
+	}
+}
+
+func TestAggregatorRPS(t *testing.T) {
+	a := NewAggregator()
+	for range 10 {
+		a.Record(time.Millisecond, 0, nil)
+	}
+	r := a.Result(2 * time.Second)
+	want := 5.0
+	if math.Abs(r.RPS-want) > 1e-9 {
+		t.Fatalf("RPS: want %v, got %v", want, r.RPS)
+	}
+
+	r0 := a.Result(0)
+	if r0.RPS != 0 {
+		t.Fatalf("RPS with zero duration: want 0, got %v", r0.RPS)
 	}
 }
 
