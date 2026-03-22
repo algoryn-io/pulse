@@ -9,6 +9,26 @@ import (
 	"testing"
 )
 
+func TestContextWithResponseStatusRecordsStatusCode(t *testing.T) {
+	var code int
+	ctx := ContextWithResponseStatus(context.Background(), &code)
+
+	client := &HTTPClient{
+		client: &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				return responseWithStatus(http.StatusAccepted, "x"), nil
+			}),
+		},
+	}
+
+	if err := client.Get(ctx, "http://pulse.test"); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d", http.StatusAccepted, code)
+	}
+}
+
 func TestHTTPClientGetSuccess(t *testing.T) {
 	client := &HTTPClient{
 		client: &http.Client{

@@ -34,7 +34,15 @@ func (c *HTTPClient) do(ctx context.Context, method, url string, body io.Reader)
 	}
 
 	resp, err := c.client.Do(req)
+	if resp != nil {
+		if p, ok := ctx.Value(responseStatusKey{}).(*int); ok && p != nil {
+			*p = resp.StatusCode
+		}
+	}
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return err
 	}
 	defer resp.Body.Close()

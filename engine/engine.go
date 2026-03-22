@@ -8,6 +8,7 @@ import (
 	"github.com/jmgo38/Pulse/internal"
 	"github.com/jmgo38/Pulse/metrics"
 	"github.com/jmgo38/Pulse/scheduler"
+	"github.com/jmgo38/Pulse/transport"
 )
 
 // Engine executes a test definition.
@@ -69,9 +70,12 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 			defer wg.Done()
 			defer limiter.Release()
 
+			var statusCode int
+			ctx = transport.ContextWithResponseStatus(ctx, &statusCode)
+
 			executionStartedAt := time.Now()
 			err := e.scenario(ctx)
-			aggregator.Record(time.Since(executionStartedAt), err != nil)
+			aggregator.Record(time.Since(executionStartedAt), statusCode, err)
 			setFirstErr(err)
 		}()
 
