@@ -2,7 +2,6 @@ package transport
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 )
@@ -51,7 +50,7 @@ func (c *HTTPClient) do(ctx context.Context, method, url string, body io.Reader)
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return resp.StatusCode, fmt.Errorf("transport: unexpected status code: %d", resp.StatusCode)
+		return resp.StatusCode, &HTTPStatusError{StatusCode: resp.StatusCode}
 	}
 
 	return resp.StatusCode, nil
