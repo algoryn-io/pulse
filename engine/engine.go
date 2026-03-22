@@ -13,12 +13,12 @@ import (
 // Engine executes a test definition.
 type Engine struct {
 	phases         []scheduler.Phase
-	scenario       func(context.Context) error
+	scenario       func(context.Context) (int, error)
 	maxConcurrency int
 }
 
 // New creates an engine for the given execution inputs.
-func New(phases []scheduler.Phase, scenario func(context.Context) error, maxConcurrency int) *Engine {
+func New(phases []scheduler.Phase, scenario func(context.Context) (int, error), maxConcurrency int) *Engine {
 	return &Engine{
 		phases:         phases,
 		scenario:       scenario,
@@ -70,8 +70,8 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 			defer limiter.Release()
 
 			executionStartedAt := time.Now()
-			err := e.scenario(ctx)
-			aggregator.Record(time.Since(executionStartedAt), err != nil)
+			statusCode, err := e.scenario(ctx)
+			aggregator.Record(time.Since(executionStartedAt), statusCode, err)
 			setFirstErr(err)
 		}()
 

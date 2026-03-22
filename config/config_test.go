@@ -17,20 +17,20 @@ type stubHTTPClient struct {
 	postBody string
 }
 
-func (c *stubHTTPClient) Get(_ context.Context, url string) error {
+func (c *stubHTTPClient) Get(_ context.Context, url string) (int, error) {
 	c.getURL = url
-	return nil
+	return 200, nil
 }
 
-func (c *stubHTTPClient) Post(_ context.Context, url string, body io.Reader) error {
+func (c *stubHTTPClient) Post(_ context.Context, url string, body io.Reader) (int, error) {
 	c.postURL = url
 	payload, err := io.ReadAll(body)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	c.postBody = string(payload)
-	return nil
+	return 201, nil
 }
 
 func TestLoadMapsYAMLToPulseTest(t *testing.T) {
@@ -148,7 +148,7 @@ func TestLoadBuildsGETScenario(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	if err := test.Scenario(context.Background()); err != nil {
+	if _, err := test.Scenario(context.Background()); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
@@ -188,7 +188,7 @@ func TestLoadBuildsPOSTScenario(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	if err := test.Scenario(context.Background()); err != nil {
+	if _, err := test.Scenario(context.Background()); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 

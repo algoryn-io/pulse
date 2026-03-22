@@ -27,8 +27,8 @@ var (
 )
 
 type httpClient interface {
-	Get(ctx context.Context, url string) error
-	Post(ctx context.Context, url string, body io.Reader) error
+	Get(ctx context.Context, url string) (int, error)
+	Post(ctx context.Context, url string, body io.Reader) (int, error)
 }
 
 type fileConfig struct {
@@ -107,14 +107,14 @@ func Load(path string) (pulse.Test, error) {
 				MaxMeanLatency: cfg.Thresholds.MaxMeanLatency.Duration,
 			},
 		},
-		Scenario: func(ctx context.Context) error {
+		Scenario: func(ctx context.Context) (int, error) {
 			switch method {
 			case "GET":
 				return client.Get(ctx, cfg.Target.URL)
 			case "POST":
 				return client.Post(ctx, cfg.Target.URL, strings.NewReader(cfg.Target.Body))
 			default:
-				return fmt.Errorf("%w: %s", errUnsupportedMethod, method)
+				return 0, fmt.Errorf("%w: %s", errUnsupportedMethod, method)
 			}
 		},
 	}

@@ -26,7 +26,8 @@ var (
 )
 
 // Scenario is the user-defined workload executed by Pulse.
-type Scenario func(ctx context.Context) error
+// The int is an HTTP or application status code; use 0 when not applicable.
+type Scenario func(ctx context.Context) (statusCode int, err error)
 
 // PhaseType describes how a phase should be executed.
 type PhaseType = model.PhaseType
@@ -89,10 +90,12 @@ type LatencyStats struct {
 
 // Result contains the aggregated outcome of a test run.
 type Result struct {
-	Total    int64
-	Failed   int64
-	Duration time.Duration
-	Latency  LatencyStats
+	Total        int64
+	Failed       int64
+	Duration     time.Duration
+	Latency      LatencyStats
+	StatusCounts map[int]int64
+	ErrorCounts  map[string]int64
 }
 
 // Run validates the test definition and executes it through the engine.
@@ -105,9 +108,11 @@ func Run(test Test) (Result, error) {
 
 	metricsResult, err := execution.Run(context.Background())
 	result := Result{
-		Total:    metricsResult.Total,
-		Failed:   metricsResult.Failed,
-		Duration: metricsResult.Duration,
+		Total:        metricsResult.Total,
+		Failed:       metricsResult.Failed,
+		Duration:     metricsResult.Duration,
+		StatusCounts: metricsResult.StatusCounts,
+		ErrorCounts:  metricsResult.ErrorCounts,
 		Latency: LatencyStats{
 			Min:  metricsResult.Latency.Min,
 			Mean: metricsResult.Latency.Mean,

@@ -17,9 +17,9 @@ func TestEngineRunExecutesScenarioAcrossPhases(t *testing.T) {
 	engine := New([]scheduler.Phase{
 		{Type: model.PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 50},
 		{Type: model.PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 50},
-	}, func(context.Context) error {
+	}, func(context.Context) (int, error) {
 		calls++
-		return nil
+		return 0, nil
 	}, 4)
 
 	result, err := engine.Run(context.Background())
@@ -48,8 +48,8 @@ func TestEngineRunPropagatesScenarioError(t *testing.T) {
 	wantErr := errors.New("scenario failed")
 	engine := New([]scheduler.Phase{
 		{Type: model.PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 50},
-	}, func(context.Context) error {
-		return wantErr
+	}, func(context.Context) (int, error) {
+		return 0, wantErr
 	}, 4)
 
 	result, err := engine.Run(context.Background())
@@ -69,8 +69,8 @@ func TestEngineRunPropagatesScenarioError(t *testing.T) {
 func TestEngineRunPropagatesUnsupportedPhaseType(t *testing.T) {
 	engine := New([]scheduler.Phase{
 		{Type: model.PhaseType("unsupported"), Duration: time.Second, ArrivalRate: 1},
-	}, func(context.Context) error {
-		return nil
+	}, func(context.Context) (int, error) {
+		return 0, nil
 	}, 1)
 
 	_, err := engine.Run(context.Background())
@@ -85,7 +85,7 @@ func TestEngineRunLimitsConcurrency(t *testing.T) {
 
 	engine := New([]scheduler.Phase{
 		{Type: model.PhaseTypeConstant, Duration: 60 * time.Millisecond, ArrivalRate: 100},
-	}, func(context.Context) error {
+	}, func(context.Context) (int, error) {
 		current := atomic.AddInt32(&running, 1)
 		defer atomic.AddInt32(&running, -1)
 
@@ -97,7 +97,7 @@ func TestEngineRunLimitsConcurrency(t *testing.T) {
 		}
 
 		time.Sleep(20 * time.Millisecond)
-		return nil
+		return 0, nil
 	}, 2)
 
 	result, err := engine.Run(context.Background())
@@ -121,11 +121,11 @@ func TestEngineRunWaitsForRunningExecutions(t *testing.T) {
 
 	engine := New([]scheduler.Phase{
 		{Type: model.PhaseTypeConstant, Duration: 25 * time.Millisecond, ArrivalRate: 100},
-	}, func(context.Context) error {
+	}, func(context.Context) (int, error) {
 		started <- struct{}{}
 		<-release
 		completed.Add(1)
-		return nil
+		return 0, nil
 	}, 2)
 
 	done := make(chan struct{})
@@ -173,16 +173,16 @@ func TestEngineRunRespectsContextCancellationWhileAcquiring(t *testing.T) {
 
 	engine := New([]scheduler.Phase{
 		{Type: model.PhaseTypeConstant, Duration: 50 * time.Millisecond, ArrivalRate: 100},
-	}, func(ctx context.Context) error {
+	}, func(ctx context.Context) (int, error) {
 		once.Do(func() {
 			close(blocked)
 		})
 
 		select {
 		case <-release:
-			return nil
+			return 0, nil
 		case <-ctx.Done():
-			return ctx.Err()
+			return 0, ctx.Err()
 		}
 	}, 1)
 

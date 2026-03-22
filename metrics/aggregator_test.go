@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -8,8 +9,8 @@ import (
 
 func TestAggregatorResult(t *testing.T) {
 	aggregator := NewAggregator()
-	aggregator.Record(10*time.Millisecond, false)
-	aggregator.Record(30*time.Millisecond, true)
+	aggregator.Record(10*time.Millisecond, 0, nil)
+	aggregator.Record(30*time.Millisecond, 0, errors.New("failed"))
 
 	result := aggregator.Result(50 * time.Millisecond)
 
@@ -46,6 +47,13 @@ func TestAggregatorResult(t *testing.T) {
 	if result.Latency.P99 != 30*time.Millisecond {
 		t.Fatalf("expected p99 30ms, got %v", result.Latency.P99)
 	}
+
+	if len(result.ErrorCounts) != 1 || result.ErrorCounts["failed"] != 1 {
+		t.Fatalf("expected errorCounts failed=1, got %+v", result.ErrorCounts)
+	}
+	if result.StatusCounts != nil {
+		t.Fatalf("expected no status counts when err path, got %+v", result.StatusCounts)
+	}
 }
 
 func TestAggregatorConcurrentRecord(t *testing.T) {
@@ -57,15 +65,15 @@ func TestAggregatorConcurrentRecord(t *testing.T) {
 		30 * time.Millisecond,
 		40 * time.Millisecond,
 	}
-	failures := []bool{false, true, false, true}
+	errs := []error{nil, errors.New("boom"), nil, errors.New("boom")}
 
 	var wg sync.WaitGroup
 	for i := range latencies {
 		wg.Add(1)
-		go func(latency time.Duration, failed bool) {
+		go func(latency time.Duration, err error) {
 			defer wg.Done()
-			aggregator.Record(latency, failed)
-		}(latencies[i], failures[i])
+			aggregator.Record(latency, 0, err)
+		}(latencies[i], errs[i])
 	}
 
 	wg.Wait()
@@ -105,13 +113,17 @@ func TestAggregatorConcurrentRecord(t *testing.T) {
 	if result.Latency.P99 != 40*time.Millisecond {
 		t.Fatalf("expected p99 40ms, got %v", result.Latency.P99)
 	}
+
+	if result.ErrorCounts["boom"] != 2 {
+		t.Fatalf("expected errorCounts boom=2, got %+v", result.ErrorCounts)
+	}
 }
 
 func TestAggregatorRetainsAllLatencies(t *testing.T) {
 	a := NewAggregator()
-	a.Record(time.Millisecond, false)
-	a.Record(2*time.Millisecond, false)
-	a.Record(3*time.Millisecond, true)
+	a.Record(time.Millisecond, 0, nil)
+	a.Record(2*time.Millisecond, 0, nil)
+	a.Record(3*time.Millisecond, 0, errors.New("x"))
 
 	if len(a.latencies) != 3 {
 		t.Fatalf("expected 3 retained latencies, got %d", len(a.latencies))
@@ -142,8 +154,8 @@ func TestPercentileFromSorted(t *testing.T) {
 
 func TestAggregatorResultDoesNotMutateRetainedLatencies(t *testing.T) {
 	a := NewAggregator()
-	a.Record(30*time.Millisecond, false)
-	a.Record(10*time.Millisecond, false)
+	a.Record(30*time.Millisecond, 0, nil)
+	a.Record(10*time.Millisecond, 0, nil)
 	snapshot := append([]time.Duration(nil), a.latencies...)
 
 	_ = a.Result(time.Second)
@@ -155,5 +167,74 @@ func TestAggregatorResultDoesNotMutateRetainedLatencies(t *testing.T) {
 		if a.latencies[i] != snapshot[i] {
 			t.Fatalf("latencies mutated at %d: want %v, got %v", i, snapshot, a.latencies)
 		}
+	}
+}
+
+func TestAggregatorStatusCountsOnSuccess(t *testing.T) {
+	a := NewAggregator()
+	a.Record(time.Millisecond, 200, nil)
+	a.Record(time.Millisecond, 200, nil)
+	a.Record(time.Millisecond, 201, nil)
+
+	r := a.Result(time.Second)
+	if r.StatusCounts[200] != 2 || r.StatusCounts[201] != 1 {
+		t.Fatalf("unexpected status counts: %+v", r.StatusCounts)
+	}
+	if r.Failed != 0 {
+		t.Fatalf("expected 0 failed, got %d", r.Failed)
+	}
+}
+
+func TestAggregatorErrorPathDoesNotIncrementStatusCounts(t *testing.T) {
+	a := NewAggregator()
+	a.Record(time.Millisecond, 500, errors.New("transport: unexpected status code: 500"))
+
+	r := a.Result(time.Second)
+	if r.StatusCounts != nil && len(r.StatusCounts) > 0 {
+		t.Fatalf("expected no status counts on error path, got %+v", r.StatusCounts)
+	}
+	if r.ErrorCounts["transport: unexpected status code: 500"] != 1 {
+		t.Fatalf("unexpected errorCounts: %+v", r.ErrorCounts)
+	}
+	if r.Failed != 1 {
+		t.Fatalf("expected 1 failed, got %d", r.Failed)
+	}
+}
+
+func TestAggregatorFailedWhenStatusAtLeast400WithoutErr(t *testing.T) {
+	a := NewAggregator()
+	a.Record(time.Millisecond, 404, nil)
+
+	r := a.Result(time.Second)
+	if r.Failed != 1 {
+		t.Fatalf("expected 1 failed for 404, got %d", r.Failed)
+	}
+	if r.StatusCounts[404] != 1 {
+		t.Fatalf("expected status count 404, got %+v", r.StatusCounts)
+	}
+}
+
+func TestAggregatorResultReturnsCopiedMaps(t *testing.T) {
+	a := NewAggregator()
+	a.Record(time.Millisecond, 200, nil)
+	r := a.Result(time.Second)
+	r.StatusCounts[200] = 99
+
+	r2 := a.Result(time.Second)
+	if r2.StatusCounts[200] != 1 {
+		t.Fatalf("internal statusCounts mutated via snapshot, got %+v", r2.StatusCounts)
+	}
+}
+
+func TestAggregatorResultReturnsCopiedErrorCountsMap(t *testing.T) {
+	a := NewAggregator()
+	a.Record(time.Millisecond, 0, errors.New("boom"))
+
+	r := a.Result(time.Second)
+	r.ErrorCounts["boom"] = 99
+
+	r2 := a.Result(time.Second)
+	if r2.ErrorCounts["boom"] != 1 {
+		t.Fatalf("internal errorCounts mutated via snapshot, got %+v", r2.ErrorCounts)
 	}
 }
