@@ -262,6 +262,19 @@ func TestRunPassesThresholds(t *testing.T) {
 	if got.Total == 0 {
 		t.Fatal("expected executions to run")
 	}
+
+	if len(got.ThresholdOutcomes) != 2 {
+		t.Fatalf("expected 2 threshold outcomes, got %+v", got.ThresholdOutcomes)
+	}
+	want := []ThresholdOutcome{
+		{Pass: true, Description: "error_rate < 0.5"},
+		{Pass: true, Description: "mean_latency < 50ms"},
+	}
+	for i := range want {
+		if got.ThresholdOutcomes[i] != want[i] {
+			t.Fatalf("outcome %d: want %+v, got %+v", i, want[i], got.ThresholdOutcomes[i])
+		}
+	}
 }
 
 func TestRunFailsWhenThresholdsAreViolated(t *testing.T) {
@@ -293,5 +306,18 @@ func TestRunFailsWhenThresholdsAreViolated(t *testing.T) {
 
 	if got.Failed != 1 {
 		t.Fatalf("expected failed 1, got %d", got.Failed)
+	}
+
+	if len(got.ThresholdOutcomes) != 2 {
+		t.Fatalf("expected 2 threshold outcomes, got %+v", got.ThresholdOutcomes)
+	}
+	want := []ThresholdOutcome{
+		{Pass: false, Description: "error_rate < 0.1"},
+		{Pass: false, Description: "mean_latency < 1ms"},
+	}
+	for i := range want {
+		if got.ThresholdOutcomes[i] != want[i] {
+			t.Fatalf("outcome %d: want %+v, got %+v", i, want[i], got.ThresholdOutcomes[i])
+		}
 	}
 }

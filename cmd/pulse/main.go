@@ -168,6 +168,18 @@ func writeText(w io.Writer, result pulse.Result) {
 			fmt.Fprintf(w, "  %s: %d\n", k, result.ErrorCounts[k])
 		}
 	}
+
+	if len(result.ThresholdOutcomes) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Thresholds:")
+		for _, o := range result.ThresholdOutcomes {
+			if o.Pass {
+				fmt.Fprintf(w, "  PASS %s\n", o.Description)
+			} else {
+				fmt.Fprintf(w, "  FAIL %s\n", o.Description)
+			}
+		}
+	}
 }
 
 func writeJSON(w io.Writer, result pulse.Result) error {

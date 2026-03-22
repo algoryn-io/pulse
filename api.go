@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,15 +89,22 @@ type LatencyStats struct {
 	Max  time.Duration
 }
 
+// ThresholdOutcome records whether a configured threshold passed for a run.
+type ThresholdOutcome struct {
+	Pass        bool
+	Description string
+}
+
 // Result contains the aggregated outcome of a test run.
 type Result struct {
-	Total        int64
-	Failed       int64
-	Duration     time.Duration
-	RPS          float64
-	Latency      LatencyStats
-	StatusCounts map[int]int64
-	ErrorCounts  map[string]int64
+	Total             int64
+	Failed            int64
+	Duration          time.Duration
+	RPS               float64
+	Latency           LatencyStats
+	StatusCounts      map[int]int64
+	ErrorCounts       map[string]int64
+	ThresholdOutcomes []ThresholdOutcome `json:"-"`
 }
 
 // Run validates the test definition and executes it through the engine.
@@ -125,11 +133,14 @@ func Run(test Test) (Result, error) {
 		},
 	}
 
+	outcomes, threshErr := evaluateThresholds(test.Config.Thresholds, result)
+	result.ThresholdOutcomes = outcomes
+
 	if err != nil {
-		return result, errors.Join(err, evaluateThresholds(test.Config.Thresholds, result))
+		return result, errors.Join(err, threshErr)
 	}
 
-	return result, evaluateThresholds(test.Config.Thresholds, result)
+	return result, threshErr
 }
 
 func validateTest(test Test) error {
@@ -181,7 +192,8 @@ func validateTest(test Test) error {
 	return nil
 }
 
-func evaluateThresholds(thresholds Thresholds, result Result) error {
+func evaluateThresholds(thresholds Thresholds, result Result) ([]ThresholdOutcome, error) {
+	var outcomes []ThresholdOutcome
 	var errs []error
 
 	if thresholds.ErrorRate > 0 {
@@ -190,24 +202,35 @@ func evaluateThresholds(thresholds Thresholds, result Result) error {
 			errorRate = float64(result.Failed) / float64(result.Total)
 		}
 
+		limitStr := strconv.FormatFloat(thresholds.ErrorRate, 'f', -1, 64)
+		desc := "error_rate < " + limitStr
 		if errorRate > thresholds.ErrorRate {
+			outcomes = append(outcomes, ThresholdOutcome{Pass: false, Description: desc})
 			errs = append(errs, fmt.Errorf(
 				"pulse: threshold error rate violated: got %.4f, limit %.4f",
 				errorRate,
 				thresholds.ErrorRate,
 			))
+		} else {
+			outcomes = append(outcomes, ThresholdOutcome{Pass: true, Description: desc})
 		}
 	}
 
-	if thresholds.MaxMeanLatency > 0 && result.Latency.Mean > thresholds.MaxMeanLatency {
-		errs = append(errs, fmt.Errorf(
-			"pulse: threshold mean latency violated: got %v, limit %v",
-			result.Latency.Mean,
-			thresholds.MaxMeanLatency,
-		))
+	if thresholds.MaxMeanLatency > 0 {
+		desc := fmt.Sprintf("mean_latency < %v", thresholds.MaxMeanLatency)
+		if result.Latency.Mean > thresholds.MaxMeanLatency {
+			outcomes = append(outcomes, ThresholdOutcome{Pass: false, Description: desc})
+			errs = append(errs, fmt.Errorf(
+				"pulse: threshold mean latency violated: got %v, limit %v",
+				result.Latency.Mean,
+				thresholds.MaxMeanLatency,
+			))
+		} else {
+			outcomes = append(outcomes, ThresholdOutcome{Pass: true, Description: desc})
+		}
 	}
 
-	return errors.Join(errs...)
+	return outcomes, errors.Join(errs...)
 }
 
 func toSchedulerPhases(phases []Phase) []scheduler.Phase {

@@ -43,6 +43,10 @@ func TestRunPrintsResults(t *testing.T) {
 			},
 			StatusCounts: map[int]int64{200: 10, 404: 2},
 			ErrorCounts:  map[string]int64{"http_status_error": 3, "unknown_error": 1},
+			ThresholdOutcomes: []pulse.ThresholdOutcome{
+				{Pass: true, Description: "error_rate < 0.05"},
+				{Pass: false, Description: "mean_latency < 200ms"},
+			},
 		}, nil
 	}
 
@@ -69,7 +73,11 @@ func TestRunPrintsResults(t *testing.T) {
 		"\n" +
 		"Errors:\n" +
 		"  http_status_error: 3\n" +
-		"  unknown_error: 1\n"
+		"  unknown_error: 1\n" +
+		"\n" +
+		"Thresholds:\n" +
+		"  PASS error_rate < 0.05\n" +
+		"  FAIL mean_latency < 200ms\n"
 
 	if stdout.String() != want {
 		t.Fatalf("expected output %q, got %q", want, stdout.String())
