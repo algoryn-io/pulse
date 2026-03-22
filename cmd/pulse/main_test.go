@@ -41,6 +41,8 @@ func TestRunPrintsResults(t *testing.T) {
 				P95:  35 * time.Millisecond,
 				P99:  38 * time.Millisecond,
 			},
+			StatusCounts: map[int]int64{200: 10, 404: 2},
+			ErrorCounts:  map[string]int64{"http_status_error": 3, "unknown_error": 1},
 		}, nil
 	}
 
@@ -59,7 +61,15 @@ func TestRunPrintsResults(t *testing.T) {
 		"Mean latency: 25ms\n" +
 		"P95 latency: 35ms\n" +
 		"P99 latency: 38ms\n" +
-		"Max latency: 40ms\n"
+		"Max latency: 40ms\n" +
+		"\n" +
+		"Status codes:\n" +
+		"  200: 10\n" +
+		"  404: 2\n" +
+		"\n" +
+		"Errors:\n" +
+		"  http_status_error: 3\n" +
+		"  unknown_error: 1\n"
 
 	if stdout.String() != want {
 		t.Fatalf("expected output %q, got %q", want, stdout.String())
@@ -87,6 +97,8 @@ func TestRunPrintsResultsWhenExecutionFails(t *testing.T) {
 				P95:  280 * time.Millisecond,
 				P99:  300 * time.Millisecond,
 			},
+			StatusCounts: map[int]int64{500: 1},
+			ErrorCounts:  map[string]int64{"context_canceled": 1},
 		}, wantErr
 	}
 
@@ -106,7 +118,13 @@ func TestRunPrintsResultsWhenExecutionFails(t *testing.T) {
 		"Mean latency: 200ms\n" +
 		"P95 latency: 280ms\n" +
 		"P99 latency: 300ms\n" +
-		"Max latency: 300ms\n"
+		"Max latency: 300ms\n" +
+		"\n" +
+		"Status codes:\n" +
+		"  500: 1\n" +
+		"\n" +
+		"Errors:\n" +
+		"  context_canceled: 1\n"
 
 	if stdout.String() != want {
 		t.Fatalf("expected output %q, got %q", want, stdout.String())
@@ -173,6 +191,8 @@ func TestRunWritesJSONToFile(t *testing.T) {
 				P95:  24 * time.Millisecond,
 				P99:  25 * time.Millisecond,
 			},
+			StatusCounts: map[int]int64{201: 8},
+			ErrorCounts:  map[string]int64{"deadline_exceeded": 2},
 		}, nil
 	}
 
@@ -208,7 +228,13 @@ func TestRunWritesJSONToFile(t *testing.T) {
 		"Mean latency: 15ms\n" +
 		"P95 latency: 24ms\n" +
 		"P99 latency: 25ms\n" +
-		"Max latency: 25ms\n"
+		"Max latency: 25ms\n" +
+		"\n" +
+		"Status codes:\n" +
+		"  201: 8\n" +
+		"\n" +
+		"Errors:\n" +
+		"  deadline_exceeded: 2\n"
 
 	if stdout.String() != wantStdout {
 		t.Fatalf("expected output %q, got %q", wantStdout, stdout.String())
