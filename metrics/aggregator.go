@@ -12,6 +12,7 @@ type Result struct {
 	Total        int64
 	Failed       int64
 	Duration     time.Duration
+	RPS          float64
 	Latency      LatencyStats
 	StatusCounts map[int]int64
 	ErrorCounts  map[string]int64
@@ -75,6 +76,9 @@ func (a *Aggregator) Result(duration time.Duration) Result {
 		Total:    a.total,
 		Failed:   a.failed,
 		Duration: duration,
+	}
+	if duration > 0 {
+		result.RPS = float64(a.total) / duration.Seconds()
 	}
 
 	if a.total == 0 {

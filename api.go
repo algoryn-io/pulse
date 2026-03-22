@@ -93,6 +93,7 @@ type Result struct {
 	Total        int64
 	Failed       int64
 	Duration     time.Duration
+	RPS          float64
 	Latency      LatencyStats
 	StatusCounts map[int]int64
 	ErrorCounts  map[string]int64
@@ -111,6 +112,7 @@ func Run(test Test) (Result, error) {
 		Total:        metricsResult.Total,
 		Failed:       metricsResult.Failed,
 		Duration:     metricsResult.Duration,
+		RPS:          metricsResult.RPS,
 		StatusCounts: metricsResult.StatusCounts,
 		ErrorCounts:  metricsResult.ErrorCounts,
 		Latency: LatencyStats{
