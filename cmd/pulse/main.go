@@ -27,11 +27,18 @@ type runOptions struct {
 }
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(exitCode(err))
+	os.Exit(runCLI(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
+	err := run(args, stdout)
+	if err == nil {
+		return 0
 	}
-	os.Exit(0)
+	if !isThresholdEvaluationFailureOnly(err) {
+		fmt.Fprintln(stderr, err)
+	}
+	return exitCode(err)
 }
 
 // exitCode maps run errors to process exit codes for CI/CD:
@@ -125,6 +132,10 @@ func run(args []string, stdout io.Writer) error {
 		}
 	} else {
 		writeText(stdout, result)
+		if isThresholdEvaluationFailureOnly(runErr) {
+			fmt.Fprintln(stdout)
+			fmt.Fprintln(stdout, "Thresholds failed. See results above.")
+		}
 	}
 
 	return runErr

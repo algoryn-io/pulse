@@ -127,6 +127,9 @@ func TestRunReturnsThresholdEvaluationError(t *testing.T) {
 	if !strings.Contains(stdout.String(), "FAIL mean_latency") {
 		t.Fatalf("expected threshold FAIL in stdout, got %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "Thresholds failed. See results above.\n") {
+		t.Fatalf("expected threshold summary in stdout, got %q", stdout.String())
+	}
 }
 
 func TestExitCode(t *testing.T) {
@@ -328,5 +331,66 @@ func TestRunWritesJSONToFile(t *testing.T) {
 
 	if stdout.String() != wantStdout {
 		t.Fatalf("expected output %q, got %q", wantStdout, stdout.String())
+	}
+}
+
+func TestRunCLISuppressesThresholdOnlyErrorOnStderr(t *testing.T) {
+	previousExecute := execute
+	t.Cleanup(func() {
+		execute = previousExecute
+	})
+
+	execute = func([]string) (pulse.Result, error) {
+		return pulse.Result{
+			Total: 1,
+			Failed: 1,
+			ThresholdOutcomes: []pulse.ThresholdOutcome{
+				{Pass: false, Description: "error_rate < 0.1"},
+			},
+		}, &pulse.ThresholdViolationError{
+			Description: "error_rate < 0.1",
+			Actual:      1.0,
+			Limit:       0.1,
+		}
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := runCLI([]string{"run"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("runCLI() code = %d, want 2", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Thresholds failed. See results above.") {
+		t.Fatalf("expected threshold summary in stdout, got %q", stdout.String())
+	}
+}
+
+func TestRunCLIPrintsRealErrorsToStderr(t *testing.T) {
+	previousExecute := execute
+	t.Cleanup(func() {
+		execute = previousExecute
+	})
+
+	wantErr := errors.New("scheduler: failed")
+	execute = func([]string) (pulse.Result, error) {
+		return pulse.Result{}, wantErr
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := runCLI([]string{"run"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("runCLI() code = %d, want 1", code)
+	}
+	if !strings.Contains(stdout.String(), "Total requests: 0\n") {
+		t.Fatalf("expected result summary in stdout, got %q", stdout.String())
+	}
+	if stderr.String() != "scheduler: failed\n" {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), "scheduler: failed\n")
 	}
 }

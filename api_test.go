@@ -329,6 +329,32 @@ func TestRunFailsWhenThresholdsAreViolated(t *testing.T) {
 	}
 }
 
+func TestThresholdViolationErrorFormatsErrorRateNicely(t *testing.T) {
+	err := (&ThresholdViolationError{
+		Description: "error_rate < 0.1",
+		Actual:      1.0,
+		Limit:       0.1,
+	}).Error()
+
+	want := "pulse: threshold violated (error_rate < 0.1): got 1.000 (100.0%), limit 0.100 (10.0%)"
+	if err != want {
+		t.Fatalf("Error() = %q, want %q", err, want)
+	}
+}
+
+func TestThresholdViolationErrorFormatsLatencyNicely(t *testing.T) {
+	err := (&ThresholdViolationError{
+		Description: "mean_latency < 200ms",
+		Actual:      250 * time.Millisecond,
+		Limit:       200 * time.Millisecond,
+	}).Error()
+
+	want := "pulse: threshold violated (mean_latency < 200ms): got 250ms, limit 200ms"
+	if err != want {
+		t.Fatalf("Error() = %q, want %q", err, want)
+	}
+}
+
 func TestRunReturnsErrorWhenThresholdMaxP95LatencyIsNegative(t *testing.T) {
 	test := Test{
 		Config: Config{
