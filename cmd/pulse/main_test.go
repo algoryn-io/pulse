@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,7 +98,11 @@ func TestRunReturnsThresholdEvaluationError(t *testing.T) {
 		execute = previousExecute
 	})
 
-	threshErr := fmt.Errorf("pulse: threshold mean latency violated: got 250ms, limit 200ms")
+	threshErr := &pulse.ThresholdViolationError{
+		Description: "mean_latency < 200ms",
+		Actual:      250 * time.Millisecond,
+		Limit:       200 * time.Millisecond,
+	}
 	execute = func([]string) (pulse.Result, error) {
 		return pulse.Result{
 			Total: 10,
@@ -111,8 +114,12 @@ func TestRunReturnsThresholdEvaluationError(t *testing.T) {
 
 	var stdout bytes.Buffer
 	err := run([]string{"run"}, &stdout)
-	if !errors.Is(err, threshErr) {
-		t.Fatalf("expected threshold error, got %v", err)
+	var tv *pulse.ThresholdViolationError
+	if !errors.As(err, &tv) {
+		t.Fatalf("expected *ThresholdViolationError, got %v", err)
+	}
+	if tv.Description != threshErr.Description {
+		t.Fatalf("description: got %q, want %q", tv.Description, threshErr.Description)
 	}
 	if exitCode(err) != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode(err))
@@ -126,7 +133,11 @@ func TestExitCode(t *testing.T) {
 	if got := exitCode(nil); got != 0 {
 		t.Fatalf("exitCode(nil) = %d, want 0", got)
 	}
-	if got := exitCode(errors.New("pulse: threshold mean latency violated: got 1s, limit 1ms")); got != 2 {
+	if got := exitCode(&pulse.ThresholdViolationError{
+		Description: "mean_latency < 1ms",
+		Actual:      time.Second,
+		Limit:       time.Millisecond,
+	}); got != 2 {
 		t.Fatalf("threshold violation = %d, want 2", got)
 	}
 	if got := exitCode(errors.New("pulse: threshold error rate must not be negative")); got != 1 {
@@ -136,13 +147,17 @@ func TestExitCode(t *testing.T) {
 		t.Fatalf("config error = %d, want 1", got)
 	}
 	joined := errors.Join(
-		fmt.Errorf("pulse: threshold error rate violated: got 0.5, limit 0.1"),
-		fmt.Errorf("pulse: threshold mean latency violated: got 1s, limit 1ms"),
+		&pulse.ThresholdViolationError{Description: "error_rate < 0.1", Actual: 0.5, Limit: 0.1},
+		&pulse.ThresholdViolationError{Description: "mean_latency < 1ms", Actual: time.Second, Limit: time.Millisecond},
 	)
 	if got := exitCode(joined); got != 2 {
 		t.Fatalf("joined threshold errors = %d, want 2", got)
 	}
-	mixed := errors.Join(errors.New("scheduler: failed"), fmt.Errorf("pulse: threshold error rate violated: got 0.5, limit 0.1"))
+	mixed := errors.Join(errors.New("scheduler: failed"), &pulse.ThresholdViolationError{
+		Description: "error_rate < 0.1",
+		Actual:      0.5,
+		Limit:       0.1,
+	})
 	if got := exitCode(mixed); got != 1 {
 		t.Fatalf("mixed errors = %d, want 1", got)
 	}

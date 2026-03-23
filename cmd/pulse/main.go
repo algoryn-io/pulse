@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	pulse "github.com/jmgo38/Pulse"
@@ -50,17 +49,15 @@ func exitCode(err error) int {
 }
 
 // isThresholdEvaluationFailureOnly reports whether err consists solely of
-// pulse.Run threshold evaluation failures (messages contain "violated").
-// Validation errors such as "pulse: threshold ... must not ..." are not treated
-// as exit 2.
+// *pulse.ThresholdViolationError leaves (including inside errors.Join).
 func isThresholdEvaluationFailureOnly(err error) bool {
 	leaves := unwrapErrorLeaves(err)
 	if len(leaves) == 0 {
 		return false
 	}
 	for _, e := range leaves {
-		msg := e.Error()
-		if !strings.Contains(msg, "pulse: threshold") || !strings.Contains(msg, "violated") {
+		var tv *pulse.ThresholdViolationError
+		if !errors.As(e, &tv) {
 			return false
 		}
 	}

@@ -302,6 +302,11 @@ func TestRunFailsWhenThresholdsAreViolated(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 
+	var tv *ThresholdViolationError
+	if !errors.As(err, &tv) {
+		t.Fatalf("expected *ThresholdViolationError in chain, got %v", err)
+	}
+
 	if got.Total < 1 {
 		t.Fatalf("expected at least one execution, got %d", got.Total)
 	}
@@ -415,6 +420,14 @@ func TestRunFailsWhenP95ThresholdViolated(t *testing.T) {
 	got, err := Run(test)
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+
+	var tv *ThresholdViolationError
+	if !errors.As(err, &tv) {
+		t.Fatalf("expected *ThresholdViolationError, got %v", err)
+	}
+	if tv.Description != "p95_latency < 2ms" {
+		t.Fatalf("description: got %q, want p95_latency < 2ms", tv.Description)
 	}
 
 	if len(got.ThresholdOutcomes) != 1 {
