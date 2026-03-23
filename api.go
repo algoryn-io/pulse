@@ -218,11 +218,11 @@ func evaluateThresholds(thresholds Thresholds, result Result) ([]ThresholdOutcom
 		desc := "error_rate < " + limitStr
 		if errorRate > thresholds.ErrorRate {
 			outcomes = append(outcomes, ThresholdOutcome{Pass: false, Description: desc})
-			errs = append(errs, fmt.Errorf(
-				"pulse: threshold error rate violated: got %.4f, limit %.4f",
-				errorRate,
-				thresholds.ErrorRate,
-			))
+			errs = append(errs, &ThresholdViolationError{
+				Description: desc,
+				Actual:      errorRate,
+				Limit:       thresholds.ErrorRate,
+			})
 		} else {
 			outcomes = append(outcomes, ThresholdOutcome{Pass: true, Description: desc})
 		}
@@ -232,11 +232,11 @@ func evaluateThresholds(thresholds Thresholds, result Result) ([]ThresholdOutcom
 		desc := fmt.Sprintf("mean_latency < %v", thresholds.MaxMeanLatency)
 		if result.Latency.Mean > thresholds.MaxMeanLatency {
 			outcomes = append(outcomes, ThresholdOutcome{Pass: false, Description: desc})
-			errs = append(errs, fmt.Errorf(
-				"pulse: threshold mean latency violated: got %v, limit %v",
-				result.Latency.Mean,
-				thresholds.MaxMeanLatency,
-			))
+			errs = append(errs, &ThresholdViolationError{
+				Description: desc,
+				Actual:      result.Latency.Mean,
+				Limit:       thresholds.MaxMeanLatency,
+			})
 		} else {
 			outcomes = append(outcomes, ThresholdOutcome{Pass: true, Description: desc})
 		}
@@ -246,11 +246,11 @@ func evaluateThresholds(thresholds Thresholds, result Result) ([]ThresholdOutcom
 		desc := fmt.Sprintf("p95_latency < %v", thresholds.MaxP95Latency)
 		if result.Latency.P95 > thresholds.MaxP95Latency {
 			outcomes = append(outcomes, ThresholdOutcome{Pass: false, Description: desc})
-			errs = append(errs, fmt.Errorf(
-				"pulse: threshold p95 latency violated: got %v, limit %v",
-				result.Latency.P95,
-				thresholds.MaxP95Latency,
-			))
+			errs = append(errs, &ThresholdViolationError{
+				Description: desc,
+				Actual:      result.Latency.P95,
+				Limit:       thresholds.MaxP95Latency,
+			})
 		} else {
 			outcomes = append(outcomes, ThresholdOutcome{Pass: true, Description: desc})
 		}
@@ -260,11 +260,11 @@ func evaluateThresholds(thresholds Thresholds, result Result) ([]ThresholdOutcom
 		desc := fmt.Sprintf("p99_latency < %v", thresholds.MaxP99Latency)
 		if result.Latency.P99 > thresholds.MaxP99Latency {
 			outcomes = append(outcomes, ThresholdOutcome{Pass: false, Description: desc})
-			errs = append(errs, fmt.Errorf(
-				"pulse: threshold p99 latency violated: got %v, limit %v",
-				result.Latency.P99,
-				thresholds.MaxP99Latency,
-			))
+			errs = append(errs, &ThresholdViolationError{
+				Description: desc,
+				Actual:      result.Latency.P99,
+				Limit:       thresholds.MaxP99Latency,
+			})
 		} else {
 			outcomes = append(outcomes, ThresholdOutcome{Pass: true, Description: desc})
 		}
