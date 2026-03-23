@@ -64,6 +64,8 @@ func TestRunPrintsResults(t *testing.T) {
 	}
 
 	want := "" +
+		"⚡ Pulse — programmable load testing\n" +
+		"\n" +
 		"Total requests: 15\n" +
 		"Failed requests: 2\n" +
 		"Duration: 3s\n" +
@@ -127,6 +129,9 @@ func TestRunReturnsThresholdEvaluationError(t *testing.T) {
 	if !strings.Contains(stdout.String(), "FAIL mean_latency") {
 		t.Fatalf("expected threshold FAIL in stdout, got %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), textBanner+"\n\n") {
+		t.Fatalf("expected banner in stdout, got %q", stdout.String())
+	}
 	if !strings.Contains(stdout.String(), "Thresholds failed. See results above.\n") {
 		t.Fatalf("expected threshold summary in stdout, got %q", stdout.String())
 	}
@@ -166,7 +171,7 @@ func TestExitCode(t *testing.T) {
 	}
 }
 
-func TestRunPrintsResultsWhenExecutionFails(t *testing.T) {
+func TestRunDoesNotPrintResultsWhenExecutionFails(t *testing.T) {
 	previousExecute := execute
 	t.Cleanup(func() {
 		execute = previousExecute
@@ -200,27 +205,8 @@ func TestRunPrintsResultsWhenExecutionFails(t *testing.T) {
 	if exitCode(err) != 1 {
 		t.Fatalf("exitCode(execution err) = %d, want 1", exitCode(err))
 	}
-
-	want := "" +
-		"Total requests: 4\n" +
-		"Failed requests: 1\n" +
-		"Duration: 1s\n" +
-		"RPS: 4.00\n" +
-		"Min latency: 100ms\n" +
-		"P50 latency: 150ms\n" +
-		"Mean latency: 200ms\n" +
-		"P95 latency: 280ms\n" +
-		"P99 latency: 300ms\n" +
-		"Max latency: 300ms\n" +
-		"\n" +
-		"Status codes:\n" +
-		"  500: 1\n" +
-		"\n" +
-		"Errors:\n" +
-		"  context_canceled: 1\n"
-
-	if stdout.String() != want {
-		t.Fatalf("expected output %q, got %q", want, stdout.String())
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout output, got %q", stdout.String())
 	}
 }
 
@@ -254,6 +240,9 @@ func TestRunPrintsJSON(t *testing.T) {
 	var got pulse.Result
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("expected valid json, got %v", err)
+	}
+	if strings.Contains(stdout.String(), textBanner) {
+		t.Fatalf("expected no banner in JSON output, got %q", stdout.String())
 	}
 
 	if got.Total != 3 || got.Failed != 1 {
@@ -312,6 +301,8 @@ func TestRunWritesJSONToFile(t *testing.T) {
 	}
 
 	wantStdout := "" +
+		"⚡ Pulse — programmable load testing\n" +
+		"\n" +
 		"Total requests: 8\n" +
 		"Failed requests: 2\n" +
 		"Duration: 1s\n" +
@@ -342,16 +333,16 @@ func TestRunCLISuppressesThresholdOnlyErrorOnStderr(t *testing.T) {
 
 	execute = func([]string) (pulse.Result, error) {
 		return pulse.Result{
-			Total: 1,
-			Failed: 1,
-			ThresholdOutcomes: []pulse.ThresholdOutcome{
-				{Pass: false, Description: "error_rate < 0.1"},
-			},
-		}, &pulse.ThresholdViolationError{
-			Description: "error_rate < 0.1",
-			Actual:      1.0,
-			Limit:       0.1,
-		}
+				Total:  1,
+				Failed: 1,
+				ThresholdOutcomes: []pulse.ThresholdOutcome{
+					{Pass: false, Description: "error_rate < 0.1"},
+				},
+			}, &pulse.ThresholdViolationError{
+				Description: "error_rate < 0.1",
+				Actual:      1.0,
+				Limit:       0.1,
+			}
 	}
 
 	var stdout bytes.Buffer
@@ -363,6 +354,9 @@ func TestRunCLISuppressesThresholdOnlyErrorOnStderr(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), textBanner+"\n\n") {
+		t.Fatalf("expected banner in stdout, got %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Thresholds failed. See results above.") {
 		t.Fatalf("expected threshold summary in stdout, got %q", stdout.String())
@@ -387,8 +381,8 @@ func TestRunCLIPrintsRealErrorsToStderr(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("runCLI() code = %d, want 1", code)
 	}
-	if !strings.Contains(stdout.String(), "Total requests: 0\n") {
-		t.Fatalf("expected result summary in stdout, got %q", stdout.String())
+	if stdout.Len() != 0 {
+		t.Fatalf("expected empty stdout, got %q", stdout.String())
 	}
 	if stderr.String() != "scheduler: failed\n" {
 		t.Fatalf("stderr = %q, want %q", stderr.String(), "scheduler: failed\n")
