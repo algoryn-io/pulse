@@ -58,6 +58,32 @@ Optional flags:
 
 ---
 
+## Examples
+
+Pulse ships with ready-to-run YAML scenarios under [`examples/`](examples/). Point `target.url` at a service you control (the files default to `http://localhost:8080`). Outcomes depend on how that service behaves.
+
+### Baseline
+
+[`examples/baseline.yaml`](examples/baseline.yaml) — steady load with latency SLOs (`maxMeanLatency`, `maxP95Latency`, `maxP99Latency`). Use a **healthy, responsive** service; thresholds should **PASS**.
+
+### Mixed Errors
+
+[`examples/mixed-errors.yaml`](examples/mixed-errors.yaml) — enforces a strict `errorRate` (10%). Use a service that returns **some HTTP 5xx** responses; the run should **FAIL** the error-rate threshold when failures exceed the limit.
+
+### Timeout
+
+[`examples/timeout.yaml`](examples/timeout.yaml) — short client `timeout` (50ms) vs a **slow** target. Requests should time out; the run should **FAIL** the error-rate threshold.
+
+Run any example from the repository root:
+
+```sh
+go run ./cmd/pulse run examples/baseline.yaml
+go run ./cmd/pulse run examples/mixed-errors.yaml
+go run ./cmd/pulse run examples/timeout.yaml
+```
+
+---
+
 ## Example output
 
 **Text (default):**

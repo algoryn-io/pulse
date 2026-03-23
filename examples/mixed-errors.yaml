@@ -1,0 +1,15 @@
+# Partial failures (e.g. HTTP 5xx from the target).
+# Point url at a service that returns some errors; error_rate should FAIL if above 10%.
+phases:
+  - type: constant
+    duration: 5s
+    arrivalRate: 20
+
+target:
+  method: GET
+  url: http://localhost:8080
+
+maxConcurrency: 4
+
+thresholds:
+  errorRate: 0.1

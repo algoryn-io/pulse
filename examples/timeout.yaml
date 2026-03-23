@@ -1,0 +1,16 @@
+# Slow or hanging service vs a tight client timeout.
+# Use a target slower than 50ms; requests time out and error_rate should FAIL.
+phases:
+  - type: constant
+    duration: 5s
+    arrivalRate: 10
+
+target:
+  method: GET
+  url: http://localhost:8080
+  timeout: 50ms
+
+maxConcurrency: 4
+
+thresholds:
+  errorRate: 0.1

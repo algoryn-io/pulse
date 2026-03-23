@@ -1,0 +1,17 @@
+# Healthy service baseline: steady load with latency SLOs.
+# Expect all configured thresholds to PASS against a fast localhost service.
+phases:
+  - type: constant
+    duration: 5s
+    arrivalRate: 20
+
+target:
+  method: GET
+  url: http://localhost:8080
+
+maxConcurrency: 4
+
+thresholds:
+  maxMeanLatency: 100ms
+  maxP95Latency: 150ms
+  maxP99Latency: 200ms
