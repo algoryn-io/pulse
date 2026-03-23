@@ -74,12 +74,17 @@ Pulse ships with ready-to-run YAML scenarios under [`examples/`](examples/). Poi
 
 [`examples/timeout.yaml`](examples/timeout.yaml) — short client `timeout` (50ms) vs a **slow** target. Requests should time out; the run should **FAIL** the error-rate threshold.
 
+### POST JSON
+
+[`examples/post-json.yaml`](examples/post-json.yaml) — **POST** with a JSON `body`, `headers` (`Content-Type`, `Authorization`), and `timeout`. Use a **fast** API that accepts the payload; latency thresholds should **PASS**.
+
 Run any example from the repository root:
 
 ```sh
 go run ./cmd/pulse run examples/baseline.yaml
 go run ./cmd/pulse run examples/mixed-errors.yaml
 go run ./cmd/pulse run examples/timeout.yaml
+go run ./cmd/pulse run examples/post-json.yaml
 ```
 
 ---
