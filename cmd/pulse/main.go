@@ -16,6 +16,7 @@ import (
 )
 
 const usageMessage = "usage: pulse run [config.yaml] [--json] [--out <file>]\n\nRuns a sample load test or a YAML-defined test"
+const textBanner = "⚡ Pulse — programmable load testing"
 
 var errUsage = fmt.Errorf(usageMessage)
 var execute = runTest
@@ -42,9 +43,10 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 // exitCode maps run errors to process exit codes for CI/CD:
-//   0 — unused here (success exits before calling exitCode)
-//   1 — configuration, runtime, or I/O failure
-//   2 — run finished but threshold evaluation failed (only violation errors)
+//
+//	0 — unused here (success exits before calling exitCode)
+//	1 — configuration, runtime, or I/O failure
+//	2 — run finished but threshold evaluation failed (only violation errors)
 func exitCode(err error) int {
 	if err == nil {
 		return 0
@@ -113,6 +115,7 @@ func run(args []string, stdout io.Writer) error {
 	}
 
 	result, runErr := execute(executeArgs)
+	showResults := runErr == nil || isThresholdEvaluationFailureOnly(runErr)
 
 	if options.outFile != "" {
 		file, err := os.Create(options.outFile)
@@ -126,19 +129,27 @@ func run(args []string, stdout io.Writer) error {
 		}
 	}
 
-	if options.jsonOutput {
-		if err := writeJSON(stdout, result); err != nil {
-			return err
-		}
-	} else {
-		writeText(stdout, result)
-		if isThresholdEvaluationFailureOnly(runErr) {
-			fmt.Fprintln(stdout)
-			fmt.Fprintln(stdout, "Thresholds failed. See results above.")
+	if showResults {
+		if options.jsonOutput {
+			if err := writeJSON(stdout, result); err != nil {
+				return err
+			}
+		} else {
+			writeBanner(stdout)
+			writeText(stdout, result)
+			if isThresholdEvaluationFailureOnly(runErr) {
+				fmt.Fprintln(stdout)
+				fmt.Fprintln(stdout, "Thresholds failed. See results above.")
+			}
 		}
 	}
 
 	return runErr
+}
+
+func writeBanner(w io.Writer) {
+	fmt.Fprintln(w, textBanner)
+	fmt.Fprintln(w)
 }
 
 func runTest(args []string) (pulse.Result, error) {
