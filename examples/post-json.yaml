@@ -1,0 +1,21 @@
+# POST with JSON body and custom headers (Content-Type, Authorization).
+# Point url at an endpoint that accepts JSON; against a fast service, thresholds should PASS.
+phases:
+  - type: constant
+    duration: 5s
+    arrivalRate: 10
+
+target:
+  method: POST
+  url: http://localhost:8080
+  headers:
+    Content-Type: application/json
+    Authorization: Bearer test-token
+  body: '{"name":"pulse","type":"test"}'
+  timeout: 100ms
+
+maxConcurrency: 4
+
+thresholds:
+  maxMeanLatency: 200ms
+  maxP95Latency: 300ms
