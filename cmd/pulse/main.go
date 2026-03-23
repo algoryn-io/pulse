@@ -17,6 +17,8 @@ import (
 
 const usageMessage = "usage: pulse run [config.yaml] [--json] [--out <file>]\n\nRuns a sample load test or a YAML-defined test"
 const textBanner = "⚡ Pulse — programmable load testing"
+const textStatusPassed = "✔ Test passed"
+const textStatusThresholdFailed = "❌ Thresholds failed"
 
 var errUsage = fmt.Errorf(usageMessage)
 var execute = runTest
@@ -140,6 +142,11 @@ func run(args []string, stdout io.Writer) error {
 			if isThresholdEvaluationFailureOnly(runErr) {
 				fmt.Fprintln(stdout)
 				fmt.Fprintln(stdout, "Thresholds failed. See results above.")
+				fmt.Fprintln(stdout)
+				fmt.Fprintln(stdout, textStatusThresholdFailed)
+			} else {
+				fmt.Fprintln(stdout)
+				fmt.Fprintln(stdout, textStatusPassed)
 			}
 		}
 	}

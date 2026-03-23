@@ -87,7 +87,9 @@ func TestRunPrintsResults(t *testing.T) {
 		"\n" +
 		"Thresholds:\n" +
 		"  PASS error_rate < 0.05\n" +
-		"  PASS mean_latency < 200ms\n"
+		"  PASS mean_latency < 200ms\n" +
+		"\n" +
+		"✔ Test passed\n"
 
 	if stdout.String() != want {
 		t.Fatalf("expected output %q, got %q", want, stdout.String())
@@ -134,6 +136,9 @@ func TestRunReturnsThresholdEvaluationError(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Thresholds failed. See results above.\n") {
 		t.Fatalf("expected threshold summary in stdout, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "\n❌ Thresholds failed\n") {
+		t.Fatalf("expected final threshold status in stdout, got %q", stdout.String())
 	}
 }
 
@@ -244,6 +249,9 @@ func TestRunPrintsJSON(t *testing.T) {
 	if strings.Contains(stdout.String(), textBanner) {
 		t.Fatalf("expected no banner in JSON output, got %q", stdout.String())
 	}
+	if strings.Contains(stdout.String(), textStatusPassed) || strings.Contains(stdout.String(), textStatusThresholdFailed) {
+		t.Fatalf("expected no final status line in JSON output, got %q", stdout.String())
+	}
 
 	if got.Total != 3 || got.Failed != 1 {
 		t.Fatalf("expected result totals to match, got %+v", got)
@@ -318,7 +326,9 @@ func TestRunWritesJSONToFile(t *testing.T) {
 		"  201: 8\n" +
 		"\n" +
 		"Errors:\n" +
-		"  deadline_exceeded: 2\n"
+		"  deadline_exceeded: 2\n" +
+		"\n" +
+		"✔ Test passed\n"
 
 	if stdout.String() != wantStdout {
 		t.Fatalf("expected output %q, got %q", wantStdout, stdout.String())
@@ -360,6 +370,9 @@ func TestRunCLISuppressesThresholdOnlyErrorOnStderr(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Thresholds failed. See results above.") {
 		t.Fatalf("expected threshold summary in stdout, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), textStatusThresholdFailed) {
+		t.Fatalf("expected final threshold status in stdout, got %q", stdout.String())
 	}
 }
 
