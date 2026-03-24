@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"time"
 
 	pulse "github.com/jmgo38/Pulse"
@@ -27,6 +28,36 @@ type runOptions struct {
 	configPath string
 	jsonOutput bool
 	outFile    string
+}
+
+type jsonSummary struct {
+	Total      int64   `json:"total"`
+	Failed     int64   `json:"failed"`
+	RPS        float64 `json:"rps"`
+	DurationMS int64   `json:"duration_ms"`
+}
+
+type jsonLatency struct {
+	MinMS  float64 `json:"min_ms"`
+	P50MS  float64 `json:"p50_ms"`
+	MeanMS float64 `json:"mean_ms"`
+	P95MS  float64 `json:"p95_ms"`
+	P99MS  float64 `json:"p99_ms"`
+	MaxMS  float64 `json:"max_ms"`
+}
+
+type jsonThreshold struct {
+	Description string `json:"description"`
+	Pass        bool   `json:"pass"`
+}
+
+type jsonResult struct {
+	Summary     jsonSummary      `json:"summary"`
+	Latency     jsonLatency      `json:"latency"`
+	StatusCodes map[string]int64 `json:"status_codes"`
+	Errors      map[string]int64 `json:"errors"`
+	Thresholds  []jsonThreshold  `json:"thresholds"`
+	Passed      bool             `json:"passed"`
 }
 
 func main() {
@@ -276,5 +307,84 @@ func writeText(w io.Writer, result pulse.Result) {
 func writeJSON(w io.Writer, result pulse.Result) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(result)
+	return encoder.Encode(toJSONResult(result))
+}
+
+func toJSONResult(result pulse.Result) jsonResult {
+	return jsonResult{
+		Summary: jsonSummary{
+			Total:      result.Total,
+			Failed:     result.Failed,
+			RPS:        result.RPS,
+			DurationMS: durationToMillisecondsInt(result.Duration),
+		},
+		Latency: jsonLatency{
+			MinMS:  durationToMilliseconds(result.Latency.Min),
+			P50MS:  durationToMilliseconds(result.Latency.P50),
+			MeanMS: durationToMilliseconds(result.Latency.Mean),
+			P95MS:  durationToMilliseconds(result.Latency.P95),
+			P99MS:  durationToMilliseconds(result.Latency.P99),
+			MaxMS:  durationToMilliseconds(result.Latency.Max),
+		},
+		StatusCodes: toJSONCountMap(result.StatusCounts),
+		Errors:      cloneStringCountMap(result.ErrorCounts),
+		Thresholds:  toJSONThresholds(result.ThresholdOutcomes),
+		Passed:      passedThresholds(result.ThresholdOutcomes),
+	}
+}
+
+func durationToMilliseconds(d time.Duration) float64 {
+	return float64(d) / float64(time.Millisecond)
+}
+
+func durationToMillisecondsInt(d time.Duration) int64 {
+	return d.Milliseconds()
+}
+
+func toJSONCountMap(counts map[int]int64) map[string]int64 {
+	if len(counts) == 0 {
+		return map[string]int64{}
+	}
+
+	out := make(map[string]int64, len(counts))
+	for code, count := range counts {
+		out[strconv.Itoa(code)] = count
+	}
+	return out
+}
+
+func cloneStringCountMap(counts map[string]int64) map[string]int64 {
+	if len(counts) == 0 {
+		return map[string]int64{}
+	}
+
+	out := make(map[string]int64, len(counts))
+	for key, count := range counts {
+		out[key] = count
+	}
+	return out
+}
+
+func toJSONThresholds(outcomes []pulse.ThresholdOutcome) []jsonThreshold {
+	if len(outcomes) == 0 {
+		return []jsonThreshold{}
+	}
+
+	out := make([]jsonThreshold, len(outcomes))
+	for i, outcome := range outcomes {
+		out[i] = jsonThreshold{
+			Description: outcome.Description,
+			Pass:        outcome.Pass,
+		}
+	}
+	return out
+}
+
+func passedThresholds(outcomes []pulse.ThresholdOutcome) bool {
+	for _, outcome := range outcomes {
+		if !outcome.Pass {
+			return false
+		}
+	}
+	return true
 }
