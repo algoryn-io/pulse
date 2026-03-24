@@ -13,6 +13,30 @@ import (
 	pulse "github.com/jmgo38/Pulse"
 )
 
+type decodedJSONResult struct {
+	Summary struct {
+		Total      int64   `json:"total"`
+		Failed     int64   `json:"failed"`
+		RPS        float64 `json:"rps"`
+		DurationMS int64   `json:"duration_ms"`
+	} `json:"summary"`
+	Latency struct {
+		MinMS  float64 `json:"min_ms"`
+		P50MS  float64 `json:"p50_ms"`
+		MeanMS float64 `json:"mean_ms"`
+		P95MS  float64 `json:"p95_ms"`
+		P99MS  float64 `json:"p99_ms"`
+		MaxMS  float64 `json:"max_ms"`
+	} `json:"latency"`
+	StatusCodes map[string]int64 `json:"status_codes"`
+	Errors      map[string]int64 `json:"errors"`
+	Thresholds  []struct {
+		Description string `json:"description"`
+		Pass        bool   `json:"pass"`
+	} `json:"thresholds"`
+	Passed bool `json:"passed"`
+}
+
 func TestRunReturnsUsageForInvalidArgs(t *testing.T) {
 	var stdout bytes.Buffer
 
@@ -226,6 +250,7 @@ func TestRunPrintsJSON(t *testing.T) {
 			Total:    3,
 			Failed:   1,
 			Duration: 2 * time.Second,
+			RPS:      1.5,
 			Latency: pulse.LatencyStats{
 				Min:  10 * time.Millisecond,
 				Max:  30 * time.Millisecond,
@@ -233,6 +258,11 @@ func TestRunPrintsJSON(t *testing.T) {
 				P50:  18 * time.Millisecond,
 				P95:  28 * time.Millisecond,
 				P99:  30 * time.Millisecond,
+			},
+			StatusCounts: map[int]int64{200: 2, 500: 1},
+			ErrorCounts:  map[string]int64{"http_status_error": 1},
+			ThresholdOutcomes: []pulse.ThresholdOutcome{
+				{Pass: true, Description: "error_rate < 0.5"},
 			},
 		}, nil
 	}
@@ -242,7 +272,7 @@ func TestRunPrintsJSON(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	var got pulse.Result
+	var got decodedJSONResult
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("expected valid json, got %v", err)
 	}
@@ -252,12 +282,36 @@ func TestRunPrintsJSON(t *testing.T) {
 	if strings.Contains(stdout.String(), textStatusPassed) || strings.Contains(stdout.String(), textStatusThresholdFailed) {
 		t.Fatalf("expected no final status line in JSON output, got %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "\"description\": \"error_rate < 0.5\"") {
+		t.Fatalf("expected literal < in JSON output, got %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "\\u003c") {
+		t.Fatalf("expected no escaped < in JSON output, got %q", stdout.String())
+	}
 
-	if got.Total != 3 || got.Failed != 1 {
+	if got.Summary.Total != 3 || got.Summary.Failed != 1 {
 		t.Fatalf("expected result totals to match, got %+v", got)
 	}
-	if got.Latency.P50 != 18*time.Millisecond || got.Latency.P95 != 28*time.Millisecond || got.Latency.P99 != 30*time.Millisecond {
-		t.Fatalf("expected percentiles in JSON, got %+v", got.Latency)
+	if got.Summary.DurationMS != 2000 {
+		t.Fatalf("expected duration_ms 2000, got %+v", got.Summary)
+	}
+	if got.Summary.RPS != 1.5 {
+		t.Fatalf("expected rps 1.5, got %+v", got.Summary)
+	}
+	if got.Latency.P50MS != 18 || got.Latency.P95MS != 28 || got.Latency.P99MS != 30 {
+		t.Fatalf("expected latency ms fields, got %+v", got.Latency)
+	}
+	if got.StatusCodes["200"] != 2 || got.StatusCodes["500"] != 1 {
+		t.Fatalf("expected status codes map, got %+v", got.StatusCodes)
+	}
+	if got.Errors["http_status_error"] != 1 {
+		t.Fatalf("expected errors map, got %+v", got.Errors)
+	}
+	if len(got.Thresholds) != 1 || got.Thresholds[0].Description != "error_rate < 0.5" || !got.Thresholds[0].Pass {
+		t.Fatalf("expected thresholds mapping, got %+v", got.Thresholds)
+	}
+	if !got.Passed {
+		t.Fatalf("expected passed=true, got %+v", got)
 	}
 }
 
@@ -299,13 +353,19 @@ func TestRunWritesJSONToFile(t *testing.T) {
 		t.Fatalf("expected no error reading output file, got %v", err)
 	}
 
-	var got pulse.Result
+	var got decodedJSONResult
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("expected valid json file, got %v", err)
 	}
 
-	if got.Total != 8 || got.Failed != 2 {
+	if got.Summary.Total != 8 || got.Summary.Failed != 2 {
 		t.Fatalf("expected result totals to match, got %+v", got)
+	}
+	if got.Summary.DurationMS != 1000 {
+		t.Fatalf("expected duration_ms 1000, got %+v", got.Summary)
+	}
+	if got.Passed != true {
+		t.Fatalf("expected passed=true, got %+v", got)
 	}
 
 	wantStdout := "" +
@@ -373,6 +433,48 @@ func TestRunCLISuppressesThresholdOnlyErrorOnStderr(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), textStatusThresholdFailed) {
 		t.Fatalf("expected final threshold status in stdout, got %q", stdout.String())
+	}
+}
+
+func TestRunPrintsThresholdFailureJSON(t *testing.T) {
+	previousExecute := execute
+	t.Cleanup(func() {
+		execute = previousExecute
+	})
+
+	execute = func([]string) (pulse.Result, error) {
+		return pulse.Result{
+				Total:    10,
+				Failed:   2,
+				Duration: 3 * time.Second,
+				ThresholdOutcomes: []pulse.ThresholdOutcome{
+					{Pass: false, Description: "error_rate < 0.1"},
+					{Pass: true, Description: "p95_latency < 200ms"},
+				},
+			}, &pulse.ThresholdViolationError{
+				Description: "error_rate < 0.1",
+				Actual:      0.2,
+				Limit:       0.1,
+			}
+	}
+
+	var stdout bytes.Buffer
+	if err := run([]string{"run", "--json"}, &stdout); err == nil {
+		t.Fatalf("expected threshold violation error, got nil")
+	}
+
+	var got decodedJSONResult
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("expected valid json, got %v", err)
+	}
+	if got.Passed {
+		t.Fatalf("expected passed=false, got %+v", got)
+	}
+	if len(got.Thresholds) != 2 {
+		t.Fatalf("expected 2 thresholds, got %+v", got.Thresholds)
+	}
+	if got.Thresholds[0].Description != "error_rate < 0.1" || got.Thresholds[0].Pass {
+		t.Fatalf("expected failed threshold mapping, got %+v", got.Thresholds)
 	}
 }
 
