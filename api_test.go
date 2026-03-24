@@ -505,3 +505,102 @@ func TestRunThresholdOutcomesStableOrderWhenAllSet(t *testing.T) {
 		}
 	}
 }
+
+func TestOnResultInvokedWithResultAndPassedTrue(t *testing.T) {
+	var hookCalled bool
+	var gotResult Result
+	var gotPassed bool
+
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 20},
+			},
+			MaxConcurrency: 2,
+			OnResult: func(r Result, passed bool) {
+				hookCalled = true
+				gotResult = r
+				gotPassed = passed
+			},
+		},
+		Scenario: func(context.Context) (int, error) {
+			time.Sleep(5 * time.Millisecond)
+			return 200, nil
+		},
+	}
+
+	want, err := Run(test)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !hookCalled {
+		t.Fatal("expected OnResult to be called")
+	}
+	if !gotPassed {
+		t.Fatalf("expected passed true with no thresholds, got %v", gotPassed)
+	}
+	if gotResult.Total != want.Total || gotResult.Failed != want.Failed {
+		t.Fatalf("hook result mismatch: want Total=%d Failed=%d, got Total=%d Failed=%d",
+			want.Total, want.Failed, gotResult.Total, gotResult.Failed)
+	}
+}
+
+func TestOnResultPassedFalseWhenThresholdFails(t *testing.T) {
+	// ErrorRate must be > 0 for evaluateThresholds to apply error_rate (0 disables it).
+	var gotPassed bool
+	var hookCalled bool
+
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 20},
+			},
+			MaxConcurrency: 2,
+			Thresholds: Thresholds{
+				ErrorRate: 1e-9, // any failed request violates
+			},
+			OnResult: func(_ Result, passed bool) {
+				hookCalled = true
+				gotPassed = passed
+			},
+		},
+		Scenario: func(context.Context) (int, error) {
+			time.Sleep(5 * time.Millisecond)
+			return 0, errors.New("scenario failed")
+		},
+	}
+
+	_, err := Run(test)
+	if err == nil {
+		t.Fatal("expected threshold error")
+	}
+	if !hookCalled {
+		t.Fatal("expected OnResult to be called")
+	}
+	if gotPassed {
+		t.Fatal("expected passed false when threshold fails")
+	}
+}
+
+func TestOnResultNilDoesNotPanic(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 20},
+			},
+			MaxConcurrency: 2,
+		},
+		Scenario: func(context.Context) (int, error) {
+			time.Sleep(5 * time.Millisecond)
+			return 0, nil
+		},
+	}
+
+	got, err := Run(test)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got.Total == 0 {
+		t.Fatal("expected at least one execution")
+	}
+}

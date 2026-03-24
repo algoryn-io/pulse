@@ -75,6 +75,7 @@ type Config struct {
 	Phases         []Phase
 	MaxConcurrency int
 	Thresholds     Thresholds
+	OnResult       ResultHook // optional; nil means no-op
 }
 
 // Test is the root public input for a Pulse run.
@@ -111,6 +112,11 @@ type Result struct {
 	ThresholdOutcomes []ThresholdOutcome `json:"-"`
 }
 
+// ResultHook is an optional callback invoked after a test run completes.
+// result contains the full aggregated metrics.
+// passed is true when all configured thresholds were met.
+type ResultHook func(result Result, passed bool)
+
 // Run validates the test definition and executes it through the engine.
 func Run(test Test) (Result, error) {
 	if err := validateTest(test); err != nil {
@@ -139,6 +145,11 @@ func Run(test Test) (Result, error) {
 
 	outcomes, threshErr := evaluateThresholds(test.Config.Thresholds, result)
 	result.ThresholdOutcomes = outcomes
+
+	if test.Config.OnResult != nil {
+		passed := threshErr == nil
+		test.Config.OnResult(result, passed)
+	}
 
 	if err != nil {
 		return result, errors.Join(err, threshErr)
