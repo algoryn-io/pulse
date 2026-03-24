@@ -54,6 +54,29 @@ func stepPhaseCallBounds(from, to int, d time.Duration, tol float64) (min, max i
 	return rampPhaseCallBounds(from, to, d, tol)
 }
 
+func spikePhaseCallBounds(from, to int, duration, spikeAt, spikeDuration time.Duration, tol float64) (min, max int) {
+	baseTime := duration - spikeDuration
+	if baseTime < 0 {
+		baseTime = 0
+	}
+	if spikeAt > duration {
+		baseTime = duration
+		spikeDuration = 0
+	}
+	exp := float64(from)*baseTime.Seconds() + float64(to)*spikeDuration.Seconds()
+	low := exp * (1 - tol)
+	high := exp * (1 + tol)
+	min = int(math.Floor(low))
+	max = int(math.Ceil(high))
+	if min < 1 {
+		min = 1
+	}
+	if max < min {
+		max = min
+	}
+	return min, max
+}
+
 func TestRunConstantExecutesScenarioMultipleTimes(t *testing.T) {
 	const (
 		arrivalRate = 25
@@ -290,5 +313,97 @@ func TestRunStepReturnsErrorForInvalidConfig(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidStepConfig) {
 		t.Fatalf("expected %v for From=0, got %v", ErrInvalidStepConfig, err)
+	}
+}
+
+func TestRunSpikeCompletesWithoutPanic(t *testing.T) {
+	err := Run(context.Background(), Phase{
+		Type:          model.PhaseTypeSpike,
+		Duration:      150 * time.Millisecond,
+		From:          5,
+		To:            50,
+		SpikeAt:       50 * time.Millisecond,
+		SpikeDuration: 50 * time.Millisecond,
+	}, func(context.Context) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestRunSpikeInvokesScenario(t *testing.T) {
+	const (
+		from          = 10
+		to            = 50
+		duration      = 300 * time.Millisecond
+		spikeAt       = 100 * time.Millisecond
+		spikeDuration = 100 * time.Millisecond
+	)
+	minCalls, maxCalls := spikePhaseCallBounds(from, to, duration, spikeAt, spikeDuration, 0.50)
+
+	calls := 0
+	err := Run(context.Background(), Phase{
+		Type:          model.PhaseTypeSpike,
+		Duration:      duration,
+		From:          from,
+		To:            to,
+		SpikeAt:       spikeAt,
+		SpikeDuration: spikeDuration,
+	}, func(context.Context) error {
+		calls++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if calls < minCalls || calls > maxCalls {
+		exp := float64(from)*0.2 + float64(to)*0.1
+		t.Fatalf("expected calls in [%d,%d] (≈%.1f invocations over %v), got %d",
+			minCalls, maxCalls, exp, duration, calls)
+	}
+}
+
+func TestRunSpikeReturnsErrorForInvalidConfig(t *testing.T) {
+	err := Run(context.Background(), Phase{
+		Type:          model.PhaseTypeSpike,
+		Duration:      time.Second,
+		From:          10,
+		To:            20,
+		SpikeDuration: 0,
+	}, func(context.Context) error {
+		return nil
+	})
+	if !errors.Is(err, ErrInvalidSpikeConfig) {
+		t.Fatalf("expected %v for SpikeDuration=0, got %v", ErrInvalidSpikeConfig, err)
+	}
+
+	err = Run(context.Background(), Phase{
+		Type:          model.PhaseTypeSpike,
+		Duration:      time.Second,
+		From:          0,
+		To:            20,
+		SpikeDuration: 100 * time.Millisecond,
+	}, func(context.Context) error {
+		return nil
+	})
+	if !errors.Is(err, ErrInvalidSpikeConfig) {
+		t.Fatalf("expected %v for From=0, got %v", ErrInvalidSpikeConfig, err)
+	}
+}
+
+func TestRunSpikeSpikeAtZeroStartsImmediately(t *testing.T) {
+	err := Run(context.Background(), Phase{
+		Type:          model.PhaseTypeSpike,
+		Duration:      150 * time.Millisecond,
+		From:          5,
+		To:            50,
+		SpikeAt:       0,
+		SpikeDuration: 80 * time.Millisecond,
+	}, func(context.Context) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
 }

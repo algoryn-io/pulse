@@ -20,6 +20,7 @@ var (
 	errNonPositiveArrivalRate = errors.New("pulse: phase arrival rate must be positive")
 	errInvalidRampEndpoints   = errors.New("pulse: ramp phase from and to must be positive")
 	errInvalidStepConfig      = errors.New("pulse: step phase requires positive From, To and Steps")
+	errInvalidSpikeConfig     = errors.New("pulse: spike phase requires positive From, To and SpikeDuration")
 	errEmptyPhaseType         = errors.New("pulse: phase type is required")
 	errUnsupportedPhaseType   = errors.New("pulse: unsupported phase type")
 	errNegativeErrorRate      = errors.New("pulse: threshold error rate must not be negative")
@@ -43,6 +44,8 @@ const (
 	PhaseTypeRamp = model.PhaseTypeRamp
 	// PhaseTypeStep represents discrete steps between two arrival rates.
 	PhaseTypeStep = model.PhaseTypeStep
+	// PhaseTypeSpike represents a temporary spike from a base rate to a peak rate.
+	PhaseTypeSpike = model.PhaseTypeSpike
 )
 
 // Phase defines the minimal execution shape for the MVP.
@@ -55,6 +58,10 @@ type Phase struct {
 	To   int
 	// Steps is the number of discrete rate levels for PhaseTypeStep.
 	Steps int
+	// SpikeAt is when the spike starts; 0 means immediately.
+	SpikeAt time.Duration
+	// SpikeDuration is how long the spike lasts.
+	SpikeDuration time.Duration
 }
 
 // IsConstant reports whether p is a constant arrival-rate phase.
@@ -72,12 +79,17 @@ func (p Phase) IsStep() bool {
 	return p.Type == PhaseTypeStep
 }
 
+// IsSpike reports whether p is a spike phase.
+func (p Phase) IsSpike() bool {
+	return p.Type == PhaseTypeSpike
+}
+
 // Thresholds define basic pass/fail conditions for a run.
 type Thresholds struct {
-	ErrorRate       float64
-	MaxMeanLatency  time.Duration
-	MaxP95Latency   time.Duration
-	MaxP99Latency   time.Duration
+	ErrorRate      float64
+	MaxMeanLatency time.Duration
+	MaxP95Latency  time.Duration
+	MaxP99Latency  time.Duration
 }
 
 // Config holds execution configuration for a test.
@@ -201,6 +213,10 @@ func validateTest(test Test) error {
 			if phase.From <= 0 || phase.To <= 0 || phase.Steps <= 0 {
 				return errInvalidStepConfig
 			}
+		case p.IsSpike():
+			if phase.From <= 0 || phase.To <= 0 || phase.SpikeDuration <= 0 {
+				return errInvalidSpikeConfig
+			}
 		default:
 			return errUnsupportedPhaseType
 		}
@@ -302,12 +318,14 @@ func toSchedulerPhases(phases []Phase) []scheduler.Phase {
 	schedulerPhases := make([]scheduler.Phase, len(phases))
 	for i := range phases {
 		schedulerPhases[i] = scheduler.Phase{
-			Type:        PhaseType(strings.TrimSpace(string(phases[i].Type))),
-			Duration:    phases[i].Duration,
-			ArrivalRate: phases[i].ArrivalRate,
-			From:        phases[i].From,
-			To:          phases[i].To,
-			Steps:       phases[i].Steps,
+			Type:          PhaseType(strings.TrimSpace(string(phases[i].Type))),
+			Duration:      phases[i].Duration,
+			ArrivalRate:   phases[i].ArrivalRate,
+			From:          phases[i].From,
+			To:            phases[i].To,
+			Steps:         phases[i].Steps,
+			SpikeAt:       phases[i].SpikeAt,
+			SpikeDuration: phases[i].SpikeDuration,
 		}
 	}
 

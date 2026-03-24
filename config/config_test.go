@@ -277,6 +277,42 @@ func TestLoadBuildsPUTScenarioWithDo(t *testing.T) {
 	}
 }
 
+func TestLoadMapsSpikePhaseYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	content := "" +
+		"phases:\n" +
+		"  - type: spike\n" +
+		"    duration: 10s\n" +
+		"    from: 10\n" +
+		"    to: 100\n" +
+		"    spikeAt: 2s\n" +
+		"    spikeDuration: 3s\n" +
+		"target:\n" +
+		"  method: GET\n" +
+		"  url: https://pulse.test\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	test, err := Load(path)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	phase := test.Config.Phases[0]
+	if phase.Type != pulse.PhaseTypeSpike {
+		t.Fatalf("expected spike phase, got %s", phase.Type)
+	}
+	if phase.SpikeAt != 2*time.Second {
+		t.Fatalf("expected spikeAt 2s, got %v", phase.SpikeAt)
+	}
+	if phase.SpikeDuration != 3*time.Second {
+		t.Fatalf("expected spikeDuration 3s, got %v", phase.SpikeDuration)
+	}
+}
+
 func TestLoadParsesTargetHeadersAndPassesThemToHTTPClient(t *testing.T) {
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -537,5 +573,25 @@ func TestValidateConfigRejectsCONNECT(t *testing.T) {
 	err := validateConfig(cfg, http.MethodConnect)
 	if !errors.Is(err, errUnsupportedMethod) {
 		t.Fatalf("expected %v, got %v", errUnsupportedMethod, err)
+	}
+}
+
+func TestValidateConfigRejectsInvalidSpike(t *testing.T) {
+	cfg := fileConfig{
+		Phases: []phaseConfig{
+			{
+				Type:          "spike",
+				Duration:      duration{Duration: time.Second},
+				From:          10,
+				To:            20,
+				SpikeDuration: duration{Duration: 0},
+			},
+		},
+		Target: targetConfig{URL: "https://pulse.test"},
+	}
+
+	err := validateConfig(cfg, http.MethodGet)
+	if !errors.Is(err, errInvalidSpike) {
+		t.Fatalf("expected %v, got %v", errInvalidSpike, err)
 	}
 }

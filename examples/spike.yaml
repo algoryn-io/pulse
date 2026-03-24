@@ -1,0 +1,17 @@
+phases:
+  - type: spike
+    duration: 60s
+    from: 20
+    to: 300
+    spikeAt: 20s
+    spikeDuration: 10s
+
+target:
+  method: GET
+  url: http://localhost:8080
+
+maxConcurrency: 400
+
+thresholds:
+  errorRate: 0.05
+  maxMeanLatency: 500ms

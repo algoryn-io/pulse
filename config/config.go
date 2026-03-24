@@ -22,6 +22,7 @@ var (
 	errNonPositiveRate      = errors.New("config: phase arrival rate must be positive")
 	errInvalidRamp          = errors.New("config: ramp phase from and to must be positive")
 	errInvalidStep          = errors.New("config: step phase requires positive from, to and steps")
+	errInvalidSpike         = errors.New("config: spike phase requires positive from, to and spikeDuration")
 	errUnsupportedPhaseType = errors.New("config: unsupported phase type")
 	errEmptyTargetMethod    = errors.New("config: target method is required")
 	errEmptyTargetURL       = errors.New("config: target url is required")
@@ -42,12 +43,14 @@ type fileConfig struct {
 }
 
 type phaseConfig struct {
-	Type        string   `yaml:"type"`
-	Duration    duration `yaml:"duration"`
-	ArrivalRate int      `yaml:"arrivalRate"`
-	From        int      `yaml:"from"`
-	To          int      `yaml:"to"`
-	Steps       int      `yaml:"steps"`
+	Type          string   `yaml:"type"`
+	Duration      duration `yaml:"duration"`
+	ArrivalRate   int      `yaml:"arrivalRate"`
+	From          int      `yaml:"from"`
+	To            int      `yaml:"to"`
+	Steps         int      `yaml:"steps"`
+	SpikeAt       duration `yaml:"spikeAt"`
+	SpikeDuration duration `yaml:"spikeDuration"`
 }
 
 type targetConfig struct {
@@ -167,6 +170,10 @@ func validateConfig(cfg fileConfig, method string) error {
 			if phase.From <= 0 || phase.To <= 0 || phase.Steps <= 0 {
 				return errInvalidStep
 			}
+		case string(pulse.PhaseTypeSpike):
+			if phase.From <= 0 || phase.To <= 0 || phase.SpikeDuration.Duration <= 0 {
+				return errInvalidSpike
+			}
 		default:
 			return errUnsupportedPhaseType
 		}
@@ -192,12 +199,14 @@ func toPulsePhases(phases []phaseConfig) []pulse.Phase {
 	result := make([]pulse.Phase, len(phases))
 	for i := range phases {
 		result[i] = pulse.Phase{
-			Type:        pulse.PhaseType(strings.ToLower(strings.TrimSpace(phases[i].Type))),
-			Duration:    phases[i].Duration.Duration,
-			ArrivalRate: phases[i].ArrivalRate,
-			From:        phases[i].From,
-			To:          phases[i].To,
-			Steps:       phases[i].Steps,
+			Type:          pulse.PhaseType(strings.ToLower(strings.TrimSpace(phases[i].Type))),
+			Duration:      phases[i].Duration.Duration,
+			ArrivalRate:   phases[i].ArrivalRate,
+			From:          phases[i].From,
+			To:            phases[i].To,
+			Steps:         phases[i].Steps,
+			SpikeAt:       phases[i].SpikeAt.Duration,
+			SpikeDuration: phases[i].SpikeDuration.Duration,
 		}
 	}
 

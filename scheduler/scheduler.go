@@ -15,16 +15,19 @@ var (
 	ErrNonPositiveArrivalRate = errors.New("scheduler: phase arrival rate must be positive")
 	ErrInvalidRampEndpoints   = errors.New("scheduler: ramp from and to must be positive")
 	ErrInvalidStepConfig      = errors.New("scheduler: step phase requires From, To and Steps > 0")
+	ErrInvalidSpikeConfig     = errors.New("scheduler: spike phase requires positive From, To and SpikeDuration")
 )
 
 // Phase contains the scheduling inputs for a single phase.
 type Phase struct {
-	Type        model.PhaseType
-	Duration    time.Duration
-	ArrivalRate int
-	From        int
-	To          int
-	Steps       int // number of discrete steps; only used by PhaseTypeStep
+	Type          model.PhaseType
+	Duration      time.Duration
+	ArrivalRate   int
+	From          int
+	To            int
+	Steps         int           // number of discrete steps; only used by PhaseTypeStep
+	SpikeAt       time.Duration // when spike starts (from phase start)
+	SpikeDuration time.Duration // how long the spike lasts
 }
 
 // Run executes the supported scheduling strategy for a phase.
@@ -45,6 +48,11 @@ func Run(ctx context.Context, phase Phase, scenario func(context.Context) error)
 			return ErrInvalidStepConfig
 		}
 		return runStep(ctx, phase, scenario)
+	case model.PhaseTypeSpike:
+		if phase.From <= 0 || phase.To <= 0 || phase.SpikeDuration <= 0 {
+			return ErrInvalidSpikeConfig
+		}
+		return runSpike(ctx, phase, scenario)
 	default:
 		return fmt.Errorf("%w: %s", ErrUnsupportedPhaseType, phase.Type)
 	}
@@ -196,6 +204,60 @@ func runStep(ctx context.Context, phase Phase, scenario func(context.Context) er
 				rate = 1
 			}
 			bucket.SetRefillRate(rate, now)
+		}
+
+		if bucket.Allow(now) {
+			if err := scenario(ctx); err != nil {
+				return err
+			}
+		} else {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(poll):
+			}
+		}
+	}
+}
+
+func runSpike(ctx context.Context, phase Phase, scenario func(context.Context) error) error {
+	start := time.Now()
+	deadline := start.Add(phase.Duration)
+	spikeStart := start.Add(phase.SpikeAt)
+	spikeEnd := spikeStart.Add(phase.SpikeDuration)
+
+	capacity := phase.From
+	if phase.To > capacity {
+		capacity = phase.To
+	}
+	if capacity < 1 {
+		capacity = 1
+	}
+
+	bucket := internal.NewDrainedTokenBucket(capacity, float64(phase.From))
+	poll := time.Millisecond
+	inSpike := false
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		now := time.Now()
+		if !now.Before(deadline) {
+			return nil
+		}
+
+		shouldBeInSpike := !now.Before(spikeStart) && now.Before(spikeEnd)
+		if shouldBeInSpike != inSpike {
+			inSpike = shouldBeInSpike
+			if inSpike {
+				bucket.SetRefillRate(float64(phase.To), now)
+			} else {
+				bucket.SetRefillRate(float64(phase.From), now)
+			}
 		}
 
 		if bucket.Allow(now) {

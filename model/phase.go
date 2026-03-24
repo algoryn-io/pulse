@@ -10,4 +10,6 @@ const (
 	PhaseTypeRamp PhaseType = "ramp"
 	// PhaseTypeStep represents a phase where arrival rate moves from From to To in discrete steps.
 	PhaseTypeStep PhaseType = "step"
+	// PhaseTypeSpike represents a phase with a temporary spike from From to To.
+	PhaseTypeSpike PhaseType = "spike"
 )
