@@ -282,6 +282,12 @@ func TestRunPrintsJSON(t *testing.T) {
 	if strings.Contains(stdout.String(), textStatusPassed) || strings.Contains(stdout.String(), textStatusThresholdFailed) {
 		t.Fatalf("expected no final status line in JSON output, got %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "\"description\": \"error_rate < 0.5\"") {
+		t.Fatalf("expected literal < in JSON output, got %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "\\u003c") {
+		t.Fatalf("expected no escaped < in JSON output, got %q", stdout.String())
+	}
 
 	if got.Summary.Total != 3 || got.Summary.Failed != 1 {
 		t.Fatalf("expected result totals to match, got %+v", got)

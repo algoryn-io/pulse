@@ -307,6 +307,7 @@ func writeText(w io.Writer, result pulse.Result) {
 func writeJSON(w io.Writer, result pulse.Result) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
+	encoder.SetEscapeHTML(false)
 	return encoder.Encode(toJSONResult(result))
 }
 
