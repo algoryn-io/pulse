@@ -2,7 +2,43 @@
 
 **Pulse** is a programmable reliability and load testing engine written in Go.
 
+Lightweight, deterministic, and designed for real-world automation.
+
 It generates controlled HTTP load against a target, collects latency and error metrics, and evaluates configurable pass/fail thresholds. Tests are driven by a YAML config file and executed through the `pulse` CLI.
+
+## Quick Start
+
+From the repository root, with a **Go** toolchain matching [`go.mod`](go.mod):
+
+**1. Start the mock HTTP server** (listens on `:8080` by default):
+
+```sh
+go run ./cmd/mockserver -mode healthy
+```
+
+**2. In another terminal, run a load test** against the examples (they target `http://localhost:8080`):
+
+```sh
+go run ./cmd/pulse run examples/baseline.yaml
+```
+
+**3. Print results as JSON** on stdout:
+
+```sh
+go run ./cmd/pulse run examples/baseline.yaml --json
+```
+
+After installing the binaries:
+
+```sh
+go install ./cmd/pulse
+go install ./cmd/mockserver
+```
+**Expected results** (with the mock server in the suggested mode from [Examples](#examples)):
+
+- [`baseline.yaml`](examples/baseline.yaml) → **PASS**
+- [`mixed-errors.yaml`](examples/mixed-errors.yaml) → **FAIL** (thresholds)
+- [`timeout.yaml`](examples/timeout.yaml) → **FAIL** (thresholds)
 
 ---
 
@@ -11,9 +47,34 @@ It generates controlled HTTP load against a target, collects latency and error m
 - **Arrival-rate scheduling** — request-driven load (requests/sec), with constant and ramp phases (not user/VU-based)
 - **Bounded concurrency** — configurable goroutine limit prevents runaway resource usage
 - **Metrics aggregation** — total, failed, RPS, latency (min, mean, p50, p95, p99, max), status code distribution, normalized error categories
-- **Thresholds** — `error_rate` and `mean_latency` with PASS / FAIL output
-- **HTTP transport** — GET and POST support via `net/http`
+- **Thresholds** — `error_rate`, `mean_latency`, `p95_latency`, `p99_latency` with PASS / FAIL in the text report
+- **HTTP transport** — GET and POST; optional `headers`, `body`, and `timeout` in YAML
 - **CLI** — `pulse run <config.yaml>` with human-readable text and JSON output modes
+
+---
+
+## Mock Server
+
+Pulse includes a **built-in mock HTTP server** for local testing and demos (`cmd/mockserver`). It avoids external dependencies while you try the example YAML files.
+
+**Run** (default address `:8080`):
+
+```sh
+go run ./cmd/mockserver -mode healthy
+```
+
+Optional: `-addr :9090` to listen on another port (then set `target.url` in your YAML accordingly).
+
+| Mode | Behavior |
+|------|----------|
+| `healthy` | Always responds **200 OK** quickly with a short body. |
+| `mixed-errors` | Alternates **200** and **500** on successive requests (deterministic). |
+| `slow` | Sleeps **120ms** before each **200** — useful with `examples/timeout.yaml` (short client timeout). |
+
+```sh
+go run ./cmd/mockserver -mode mixed-errors
+go run ./cmd/mockserver -mode slow
+```
 
 ---
 
@@ -54,38 +115,71 @@ Optional flags:
 | Flag | Description |
 |---|---|
 | `--json` | Print results as JSON to stdout |
-| `--out <file>` | Write JSON results to a file |
+| `--out <file>` | Write results as JSON to a file (can combine with `--json` to mirror the same JSON to stdout) |
 
 ---
 
 ## Examples
 
-Pulse ships with ready-to-run YAML scenarios under [`examples/`](examples/). Point `target.url` at a service you control (the files default to `http://localhost:8080`). Outcomes depend on how that service behaves.
+Ready-to-run scenarios live under [`examples/`](examples/). By default they use **`http://localhost:8080`** — pair them with **`go run ./cmd/mockserver`** in the matching mode (see above). Expected outcomes depend on server behavior.
 
-### Baseline
+| File | Intent | Suggested mock mode | Example command |
+|------|--------|---------------------|-----------------|
+| [`baseline.yaml`](examples/baseline.yaml) | Latency SLOs; all thresholds should **PASS** on a fast service | `healthy` | `go run ./cmd/pulse run examples/baseline.yaml` |
+| [`mixed-errors.yaml`](examples/mixed-errors.yaml) | Strict `errorRate`; should **FAIL** when failures exceed the limit | `mixed-errors` | `go run ./cmd/pulse run examples/mixed-errors.yaml` |
+| [`timeout.yaml`](examples/timeout.yaml) | Short client timeout vs slow responses; error rate should **FAIL** | `slow` | `go run ./cmd/pulse run examples/timeout.yaml` |
+| [`post-json.yaml`](examples/post-json.yaml) | POST with JSON body and headers | `healthy` (POST body accepted) | `go run ./cmd/pulse run examples/post-json.yaml` |
 
-[`examples/baseline.yaml`](examples/baseline.yaml) — steady load with latency SLOs (`maxMeanLatency`, `maxP95Latency`, `maxP99Latency`). Use a **healthy, responsive** service; thresholds should **PASS**.
+---
 
-### Mixed Errors
+## Exit Codes
 
-[`examples/mixed-errors.yaml`](examples/mixed-errors.yaml) — enforces a strict `errorRate` (10%). Use a service that returns **some HTTP 5xx** responses; the run should **FAIL** the error-rate threshold when failures exceed the limit.
+The `pulse` CLI uses exit codes for automation (e.g. CI):
 
-### Timeout
+| Code | Meaning |
+|------|--------|
+| **0** | Run finished and **all configured thresholds passed** (`pulse.Run` returned no error). |
+| **2** | Run finished but **at least one threshold failed** — the error chain contains only `*pulse.ThresholdViolationError` values. |
+| **1** | Anything else: invalid usage, config/load failure, I/O error, scheduler/engine failure, or a **mix** of threshold and non-threshold errors. |
 
-[`examples/timeout.yaml`](examples/timeout.yaml) — short client `timeout` (50ms) vs a **slow** target. Requests should time out; the run should **FAIL** the error-rate threshold.
+---
 
-### POST JSON
+## JSON Output
 
-[`examples/post-json.yaml`](examples/post-json.yaml) — **POST** with a JSON `body`, `headers` (`Content-Type`, `Authorization`), and `timeout`. Use a **fast** API that accepts the payload; latency thresholds should **PASS**.
+With **`--json`**, the CLI prints one indented JSON object to stdout. With **`--out <path>`**, it writes the **same** object to a file. Without **`--json`**, stdout still shows the **text** report when a result is available; with **`--json`**, stdout is JSON only, and you can still add **`--out`** to persist a copy.
 
-Run any example from the repository root:
+**Structure:**
 
-```sh
-go run ./cmd/pulse run examples/baseline.yaml
-go run ./cmd/pulse run examples/mixed-errors.yaml
-go run ./cmd/pulse run examples/timeout.yaml
-go run ./cmd/pulse run examples/post-json.yaml
+```json
+{
+  "summary": {
+    "total": 0,
+    "failed": 0,
+    "rps": 0,
+    "duration_ms": 0
+  },
+  "latency": {
+    "min_ms": 0,
+    "p50_ms": 0,
+    "mean_ms": 0,
+    "p95_ms": 0,
+    "p99_ms": 0,
+    "max_ms": 0
+  },
+  "status_codes": { "200": 0 },
+  "errors": { "http_status_error": 0 },
+  "thresholds": [
+    { "description": "string", "pass": true }
+  ],
+  "passed": true
+}
 ```
+
+- **Durations** — `summary.duration_ms` is the run length in **milliseconds** (integer). **`latency.*_ms`** values are also in **milliseconds** (floating-point).
+- **`passed`** — `true` when **every** configured threshold evaluation succeeded; `false` if any failed. Aligns with [exit code](#exit-codes) **0** vs **2** for threshold-only failures.
+- **`thresholds`** — ordered list of individual checks; each entry has a human-readable **`description`** and **`pass`**.
+
+Empty maps or an empty `thresholds` array are valid when there is nothing to report.
 
 ---
 
@@ -122,24 +216,29 @@ Thresholds:
 
 ```json
 {
-  "Total": 2250,
-  "Failed": 12,
-  "Duration": 60410000000,
-  "RPS": 37.25,
-  "Latency": {
-    "Min": 18000000,
-    "Mean": 52000000,
-    "P50": 45000000,
-    "P95": 134000000,
-    "P99": 198000000,
-    "Max": 312000000
+  "summary": {
+    "total": 2250,
+    "failed": 12,
+    "rps": 37.25,
+    "duration_ms": 60410
   },
-  "StatusCounts": { "200": 2238, "503": 12 },
-  "ErrorCounts": { "http_status_error": 12 }
+  "latency": {
+    "min_ms": 18,
+    "p50_ms": 45,
+    "mean_ms": 52,
+    "p95_ms": 134,
+    "p99_ms": 198,
+    "max_ms": 312
+  },
+  "status_codes": { "200": 2238, "503": 12 },
+  "errors": { "http_status_error": 12 },
+  "thresholds": [
+    { "description": "error_rate < 0.01", "pass": true },
+    { "description": "mean_latency < 200ms", "pass": true }
+  ],
+  "passed": true
 }
 ```
-
-> **Note:** durations in JSON are encoded in nanoseconds (Go `time.Duration` default representation).
 
 ---
 
@@ -158,8 +257,7 @@ pulse run config.yaml
     engine.Run()          Orchestrates phases and concurrency
         │
         ▼
-  scheduler.Run()         Fires scenario calls at the target arrival rate
-  (constant / ramp)
+  scheduler.Run()         Token-bucket pacing; constant and ramp phases
         │
         ▼
    Scenario func          Executes the HTTP request via transport.HTTPClient
@@ -177,17 +275,17 @@ pulse run config.yaml
 |---|---|
 | `pulse` (root) | Public API — `Test`, `Config`, `Phase`, `Run`, `Result` |
 | `engine` | Runs phases in sequence; manages goroutine lifecycle and concurrency limiter |
-| `scheduler` | Fires scenario calls at the configured arrival rate (ticker for constant, interpolated interval for ramp) |
+| `scheduler` | Fires scenario calls at the configured arrival rate (token bucket) |
 | `metrics` | Thread-safe aggregation of latency, status codes, and normalized error categories |
 | `transport` | Minimal HTTP client (GET / POST) built on `net/http` |
 | `config` | YAML loader — maps file config to `pulse.Test` |
-| `internal` | Concurrency limiter (semaphore) |
+| `internal` | Concurrency limiter (semaphore); token bucket helper |
 
 ---
 
 ## Roadmap
 
-- **Token bucket scheduler** — smoother burst control for constant and ramp phases (stub exists in `internal/tokenbucket.go`)
+- **Advanced scheduling controls** — finer-grained pacing and burst tuning
 - **Additional phase types** — step, spike
 - **More HTTP methods** — PUT, DELETE, PATCH
 - **Export formats** — CSV, OpenTelemetry
