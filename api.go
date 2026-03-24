@@ -19,6 +19,7 @@ var (
 	errNonPositivePhase       = errors.New("pulse: phase duration must be positive")
 	errNonPositiveArrivalRate = errors.New("pulse: phase arrival rate must be positive")
 	errInvalidRampEndpoints   = errors.New("pulse: ramp phase from and to must be positive")
+	errInvalidStepConfig      = errors.New("pulse: step phase requires positive From, To and Steps")
 	errEmptyPhaseType         = errors.New("pulse: phase type is required")
 	errUnsupportedPhaseType   = errors.New("pulse: unsupported phase type")
 	errNegativeErrorRate      = errors.New("pulse: threshold error rate must not be negative")
@@ -40,6 +41,8 @@ const (
 	PhaseTypeConstant = model.PhaseTypeConstant
 	// PhaseTypeRamp represents a linear ramp between two arrival rates.
 	PhaseTypeRamp = model.PhaseTypeRamp
+	// PhaseTypeStep represents discrete steps between two arrival rates.
+	PhaseTypeStep = model.PhaseTypeStep
 )
 
 // Phase defines the minimal execution shape for the MVP.
@@ -47,9 +50,11 @@ type Phase struct {
 	Type        PhaseType
 	Duration    time.Duration
 	ArrivalRate int
-	// From and To are the arrival rates (per second) at the start and end of a ramp phase.
+	// From and To are the arrival rates (per second) at the start and end of a ramp or step phase.
 	From int
 	To   int
+	// Steps is the number of discrete rate levels for PhaseTypeStep.
+	Steps int
 }
 
 // IsConstant reports whether p is a constant arrival-rate phase.
@@ -60,6 +65,11 @@ func (p Phase) IsConstant() bool {
 // IsRamp reports whether p is a linear ramp phase.
 func (p Phase) IsRamp() bool {
 	return p.Type == PhaseTypeRamp
+}
+
+// IsStep reports whether p is a stepped ramp phase.
+func (p Phase) IsStep() bool {
+	return p.Type == PhaseTypeStep
 }
 
 // Thresholds define basic pass/fail conditions for a run.
@@ -187,6 +197,10 @@ func validateTest(test Test) error {
 			if phase.ArrivalRate <= 0 {
 				return errNonPositiveArrivalRate
 			}
+		case p.IsStep():
+			if phase.From <= 0 || phase.To <= 0 || phase.Steps <= 0 {
+				return errInvalidStepConfig
+			}
 		default:
 			return errUnsupportedPhaseType
 		}
@@ -293,6 +307,7 @@ func toSchedulerPhases(phases []Phase) []scheduler.Phase {
 			ArrivalRate: phases[i].ArrivalRate,
 			From:        phases[i].From,
 			To:          phases[i].To,
+			Steps:       phases[i].Steps,
 		}
 	}
 

@@ -8,4 +8,6 @@ const (
 	PhaseTypeConstant PhaseType = "constant"
 	// PhaseTypeRamp represents a phase where arrival rate changes linearly from From to To.
 	PhaseTypeRamp PhaseType = "ramp"
+	// PhaseTypeStep represents a phase where arrival rate moves from From to To in discrete steps.
+	PhaseTypeStep PhaseType = "step"
 )

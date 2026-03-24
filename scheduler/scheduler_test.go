@@ -48,6 +48,12 @@ func rampPhaseCallBounds(from, to int, d time.Duration, tol float64) (min, max i
 	return min, max
 }
 
+// stepPhaseCallBounds uses the same average-rate integral as rampPhaseCallBounds;
+// stepwise SetRefillRate adds extra jitter vs a smooth ramp.
+func stepPhaseCallBounds(from, to int, d time.Duration, tol float64) (min, max int) {
+	return rampPhaseCallBounds(from, to, d, tol)
+}
+
 func TestRunConstantExecutesScenarioMultipleTimes(t *testing.T) {
 	const (
 		arrivalRate = 25
@@ -208,5 +214,81 @@ func TestRunRampReturnsErrorForInvalidEndpoints(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidRampEndpoints) {
 		t.Fatalf("expected %v, got %v", ErrInvalidRampEndpoints, err)
+	}
+}
+
+func TestRunStepCompletesWithoutPanic(t *testing.T) {
+	err := Run(context.Background(), Phase{
+		Type:     model.PhaseTypeStep,
+		Duration: 120 * time.Millisecond,
+		From:     2,
+		To:       10,
+		Steps:    3,
+	}, func(context.Context) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestRunStepInvokesScenario(t *testing.T) {
+	const (
+		from     = 10
+		to       = 40
+		steps    = 3
+		duration = 280 * time.Millisecond
+	)
+	minCalls, maxCalls := stepPhaseCallBounds(from, to, duration, 0.35)
+	if minCalls < 2 {
+		minCalls = 2
+	}
+
+	calls := 0
+	err := Run(context.Background(), Phase{
+		Type:     model.PhaseTypeStep,
+		Duration: duration,
+		From:     from,
+		To:       to,
+		Steps:    steps,
+	}, func(context.Context) error {
+		calls++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if calls < minCalls || calls > maxCalls {
+		exp := 0.5 * float64(from+to) * duration.Seconds()
+		t.Fatalf("expected calls in [%d,%d] (≈%.1f invocations over %v), got %d",
+			minCalls, maxCalls, exp, duration, calls)
+	}
+}
+
+func TestRunStepReturnsErrorForInvalidConfig(t *testing.T) {
+	err := Run(context.Background(), Phase{
+		Type:     model.PhaseTypeStep,
+		Duration: time.Second,
+		From:     10,
+		To:       20,
+		Steps:    0,
+	}, func(context.Context) error {
+		return nil
+	})
+	if !errors.Is(err, ErrInvalidStepConfig) {
+		t.Fatalf("expected %v for Steps=0, got %v", ErrInvalidStepConfig, err)
+	}
+
+	err = Run(context.Background(), Phase{
+		Type:     model.PhaseTypeStep,
+		Duration: time.Second,
+		From:     0,
+		To:       20,
+		Steps:    3,
+	}, func(context.Context) error {
+		return nil
+	})
+	if !errors.Is(err, ErrInvalidStepConfig) {
+		t.Fatalf("expected %v for From=0, got %v", ErrInvalidStepConfig, err)
 	}
 }
