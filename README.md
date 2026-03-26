@@ -60,7 +60,7 @@ go get algoryn.io/pulse@latest
 - **CLI** — `pulse run <config.yaml>` with human-readable text and JSON output modes
 - **Result hook** — optional `OnResult` callback in `Config` for post-run integrations (CI systems, observability pipelines)
 - **Middleware pipeline** — composable `Middleware` type with `Chain` and `Apply` helpers
-- **Chaos engineering** — `WithLatency` and `WithErrorRate` for fault injection
+- **Chaos engineering** — `WithLatency`, `WithErrorRate`, `WithJitter`, `WithTimeout`, `WithStatusCode`, `WithRetry`, `WithBulkhead`, `WithCircuitBreaker`
 - **go test integration** — `RunT` and `SkipIfShort` for load testing inside `go test`
 ---
 
@@ -322,11 +322,12 @@ pulse run config.yaml
 - **Fabric integration** — `ToRunEvent` connects Pulse to Algoryn ecosystem
 - **go test integration** — `RunT` and `SkipIfShort`
 - **Middleware pipeline** — `Chain`, `Apply`, `WithLatency`, `WithErrorRate`
+- **Chaos toolkit** — `WithJitter`, `WithTimeout`, `WithStatusCode`, `WithRetry`, `WithBulkhead`, `WithCircuitBreaker`
 
 ### Upcoming
 - **Export formats** — CSV, OpenTelemetry
 - **gRPC transport**
-- **More chaos primitives** — `WithTimeout`, `WithRetry`, `WithJitter`
+- **docs/architecture.md** — technical design decisions
 ---
 
 ## Part of Algoryn Fabric
@@ -336,7 +337,7 @@ an open source infrastructure toolkit for Go teams building reliable products.
 
 | Tool | What it does | Status |
 |------|-------------|--------|
-| **Pulse** | Load testing & chaos engineering | `v0.3.0` |
+| **Pulse** | Load testing & chaos engineering | `v0.3.6` |
 | **Relay** | API Gateway & observability | `coming soon` |
 | **Beacon** | Alerting & on-call | `planned` |
 
