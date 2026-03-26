@@ -59,7 +59,9 @@ go get algoryn.io/pulse@latest
 - **HTTP transport** — GET, POST, PUT, DELETE, PATCH; optional `headers`, `body`, and `timeout` in YAML
 - **CLI** — `pulse run <config.yaml>` with human-readable text and JSON output modes
 - **Result hook** — optional `OnResult` callback in `Config` for post-run integrations (CI systems, observability pipelines)
-
+- **Middleware pipeline** — composable `Middleware` type with `Chain` and `Apply` helpers
+- **Chaos engineering** — `WithLatency` and `WithErrorRate` for fault injection
+- **go test integration** — `RunT` and `SkipIfShort` for load testing inside `go test`
 ---
 
 ## Mock Server
@@ -315,15 +317,16 @@ pulse run config.yaml
 - **Full HTTP method support** — PUT, DELETE, PATCH
 - **Result hook** — `OnResult` callback for post-run integrations
 
-### v0.3.0 ✓
+### v0.3.x ✓
 - **Algoryn ecosystem** — module path migrated to `algoryn.io/pulse`
-- **Shared contracts** — integrated with `algoryn.io/fabric`
+- **Fabric integration** — `ToRunEvent` connects Pulse to Algoryn ecosystem
+- **go test integration** — `RunT` and `SkipIfShort`
+- **Middleware pipeline** — `Chain`, `Apply`, `WithLatency`, `WithErrorRate`
 
 ### Upcoming
 - **Export formats** — CSV, OpenTelemetry
 - **gRPC transport**
-- **Middleware pipeline** — composable scenario wrappers
-
+- **More chaos primitives** — `WithTimeout`, `WithRetry`, `WithJitter`
 ---
 
 ## Part of Algoryn Fabric
