@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	fabricv1 "algoryn.io/fabric/gen/go/fabric/v1"
+
 	"algoryn.io/pulse/engine"
 	"algoryn.io/pulse/model"
 	"algoryn.io/pulse/scheduler"
@@ -97,7 +99,10 @@ type Config struct {
 	Phases         []Phase
 	MaxConcurrency int
 	Thresholds     Thresholds
-	OnResult       ResultHook // optional; nil means no-op
+	// Service is optional metadata for Fabric MetricSnapshot.Service and RunCompleted payloads.
+	Service      string
+	OnResult     ResultHook     // optional; nil means no-op
+	OnFabricEmit FabricEmitHook // optional; protobuf RunEvent + RunCompleted Event
 }
 
 // Test is the root public input for a Pulse run.
@@ -140,6 +145,10 @@ type Result struct {
 // passed is true when all configured thresholds were met.
 type ResultHook func(result Result, passed bool)
 
+// FabricEmitHook is invoked after threshold evaluation with protobuf contracts for the Fabric stack.
+// run carries fabric.v1.MetricSnapshot; completed is EVENT_TYPE_RUN_COMPLETED for tools like Beacon.
+type FabricEmitHook func(run *fabricv1.RunEvent, completed *fabricv1.Event)
+
 // Run validates the test definition and executes it through the engine.
 func Run(test Test) (Result, error) {
 	if err := validateTest(test); err != nil {
@@ -148,6 +157,7 @@ func Run(test Test) (Result, error) {
 
 	execution := engine.New(toSchedulerPhases(test.Config.Phases), test.Scenario, test.Config.MaxConcurrency)
 
+	startedAt := time.Now()
 	metricsResult, err := execution.Run(context.Background())
 	result := Result{
 		Total:        metricsResult.Total,
@@ -170,8 +180,13 @@ func Run(test Test) (Result, error) {
 	outcomes, threshErr := evaluateThresholds(test.Config.Thresholds, result)
 	result.ThresholdOutcomes = outcomes
 
+	passed := threshErr == nil
+	if test.Config.OnFabricEmit != nil {
+		emit := ToFabricRunEmit(test.Config.Service, result, passed, startedAt)
+		test.Config.OnFabricEmit(emit.RunEvent, emit.RunCompleted)
+	}
+
 	if test.Config.OnResult != nil {
-		passed := threshErr == nil
 		test.Config.OnResult(result, passed)
 	}
 

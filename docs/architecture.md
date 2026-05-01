@@ -185,14 +185,22 @@ from quick test runs.
 
 ## Algoryn Fabric integration
 
-Pulse emits `fabric.RunEvent` via `ToRunEvent`:
+Pulse maps **`pulse.Result`** to Fabric contracts so Relay, Beacon, and other tools share one binary shape.
+
 ```go
+// Legacy Go contracts (algoryn.io/fabric/metrics)
 func ToRunEvent(result Result, passed bool, startedAt time.Time) fabricmetrics.RunEvent
+
+// Protocol buffers (algoryn.io/fabric/gen/go/fabric/v1)
+func ToRunEventProto(result Result, passed bool, startedAt time.Time) *fabricv1.RunEvent
+
+// Matched RunEvent + EVENT_TYPE_RUN_COMPLETED envelope (common run id)
+func ToFabricRunEmit(service string, result Result, passed bool, startedAt time.Time) FabricRunEmit
 ```
 
-This converts `pulse.Result` into the shared contract defined in
-`algoryn.io/fabric/metrics`, making Pulse results consumable by other
-Algoryn tools (Relay, Beacon) without custom adapters.
+After each run, **`Run`** records **`startedAt`** before the engine executes, evaluates thresholds, then invokes optional **`Config.OnFabricEmit(run *fabricv1.RunEvent, completed *fabricv1.Event)`** before **`OnResult`**. Use **`Config.Service`** for **`MetricSnapshot.service`** and run-completed metadata.
+
+Conversion helpers from the **`algoryn.io/fabric`** module (**`RunEventToProto`**, **`RunCompletedPayloadToProto`**, **`MetricSnapshotToProto`**) keep field mapping consistent with the `.proto` definitions.
 
 ---
 

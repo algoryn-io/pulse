@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	fabricv1 "algoryn.io/fabric/gen/go/fabric/v1"
 )
 
 func TestRunReturnsErrorWhenNoPhases(t *testing.T) {
@@ -602,5 +604,50 @@ func TestOnResultNilDoesNotPanic(t *testing.T) {
 	}
 	if got.Total == 0 {
 		t.Fatal("expected at least one execution")
+	}
+}
+
+func TestOnFabricEmitInvokedWithProtobufContracts(t *testing.T) {
+	var hookCalled bool
+	var gotRun *fabricv1.RunEvent
+	var gotEvt *fabricv1.Event
+
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 20},
+			},
+			MaxConcurrency: 2,
+			Service:        "api-test",
+			OnFabricEmit: func(run *fabricv1.RunEvent, completed *fabricv1.Event) {
+				hookCalled = true
+				gotRun = run
+				gotEvt = completed
+			},
+		},
+		Scenario: func(context.Context) (int, error) {
+			time.Sleep(5 * time.Millisecond)
+			return 200, nil
+		},
+	}
+
+	_, err := Run(test)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !hookCalled {
+		t.Fatal("expected OnFabricEmit to be called")
+	}
+	if gotRun == nil || gotRun.GetSnapshot() == nil {
+		t.Fatal("expected non-nil RunEvent with snapshot")
+	}
+	if gotRun.GetSnapshot().GetService() != "api-test" {
+		t.Fatalf("snapshot service = %q", gotRun.GetSnapshot().GetService())
+	}
+	if gotEvt.GetType() != fabricv1.EventType_EVENT_TYPE_RUN_COMPLETED {
+		t.Fatalf("event type = %v", gotEvt.GetType())
+	}
+	if gotEvt.GetRunCompleted().GetService() != "api-test" {
+		t.Fatalf("payload service = %q", gotEvt.GetRunCompleted().GetService())
 	}
 }
