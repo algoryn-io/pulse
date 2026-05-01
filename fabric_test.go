@@ -5,6 +5,7 @@ import (
 	"time"
 
 	fabricmetrics "algoryn.io/fabric/metrics"
+	fabricv1 "algoryn.io/fabric/gen/go/fabric/v1"
 )
 
 func TestToRunEvent_BasicFields(t *testing.T) {
@@ -86,5 +87,90 @@ func TestToRunEvent_ThresholdOutcomes(t *testing.T) {
 	}
 	if event.Thresholds[1].Pass {
 		t.Errorf("Thresholds[1].Pass = true; want false")
+	}
+}
+
+func TestToRunEventProto_MetricSnapshot(t *testing.T) {
+	startedAt := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+	result := Result{
+		Total:        80,
+		Failed:       2,
+		Duration:     8 * time.Second,
+		RPS:          10,
+		StatusCounts: map[int]int64{200: 78, 500: 2},
+		Latency: LatencyStats{
+			Min:  1 * time.Millisecond,
+			Mean: 5 * time.Millisecond,
+			P50:  4 * time.Millisecond,
+			P90:  10 * time.Millisecond,
+			P95:  12 * time.Millisecond,
+			P99:  20 * time.Millisecond,
+			Max:  25 * time.Millisecond,
+		},
+	}
+
+	pb := ToRunEventProto(result, true, startedAt)
+	if pb.GetSource() != fabricmetrics.SourcePulse {
+		t.Fatalf("source = %q", pb.GetSource())
+	}
+	snap := pb.GetSnapshot()
+	if snap.GetTotal() != 80 || snap.GetFailed() != 2 {
+		t.Fatalf("snapshot totals: %+v", snap)
+	}
+	if snap.GetStatusCodes()[200] != 78 || snap.GetStatusCodes()[500] != 2 {
+		t.Fatalf("status codes: %v", snap.GetStatusCodes())
+	}
+	if !pb.GetPassed() {
+		t.Fatal("expected passed")
+	}
+	if pb.GetStartedAt() == nil || pb.GetEndedAt() == nil {
+		t.Fatal("expected timestamps")
+	}
+}
+
+func TestToFabricRunEmit_RunIDMatchesAndServiceOnSnapshot(t *testing.T) {
+	startedAt := time.Date(2024, 3, 1, 9, 0, 0, 0, time.UTC)
+	result := Result{
+		Total:    40,
+		Failed:   4,
+		Duration: 4 * time.Second,
+		RPS:      10,
+		Latency: LatencyStats{
+			P99: 30 * time.Millisecond,
+		},
+	}
+
+	emit := ToFabricRunEmit("checkout-api", result, false, startedAt)
+	run := emit.RunEvent
+	rc := emit.RunCompleted
+
+	if run.GetId() == "" {
+		t.Fatal("empty run id")
+	}
+	p := rc.GetRunCompleted()
+	if p == nil {
+		t.Fatal("missing run_completed payload")
+	}
+	if p.GetRunId() != run.GetId() {
+		t.Fatalf("run id mismatch: event %q vs run %q", p.GetRunId(), run.GetId())
+	}
+	if p.GetService() != "checkout-api" {
+		t.Fatalf("service = %q", p.GetService())
+	}
+	if run.GetSnapshot().GetService() != "checkout-api" {
+		t.Fatalf("snapshot service = %q", run.GetSnapshot().GetService())
+	}
+	if rc.GetType() != fabricv1.EventType_EVENT_TYPE_RUN_COMPLETED {
+		t.Fatalf("type = %v", rc.GetType())
+	}
+	if rc.GetTimestamp() == nil {
+		t.Fatal("envelope timestamp")
+	}
+	if p.GetSummary() == nil {
+		t.Fatal("summary")
+	}
+	wantErrRate := 0.1
+	if p.GetSummary().GetErrorRate() != wantErrRate {
+		t.Fatalf("error rate = %v want %v", p.GetSummary().GetErrorRate(), wantErrRate)
 	}
 }

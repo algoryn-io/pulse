@@ -21,7 +21,14 @@ This split keeps the scheduler and network I/O in idiomatic, concurrent Go while
 
 ### Fabric integration
 
-Pulse depends on [`algoryn.io/fabric`](https://github.com/algoryn-io/fabric) for shared **metrics contracts**. The public helper **`ToRunEvent`** maps a `pulse.Result` into **Fabric** `RunEvent` / `MetricSnapshot` types (`algoryn.io/fabric/metrics`: latency min/mean/percentiles/max, RPS, status and error maps, and threshold outcomes). That gives you **one shape of performance data** when you wire Pulse into dashboards, other Algoryn tools, or cross-service reporting, without ad hoc struct duplication.
+Pulse depends on [`algoryn.io/fabric`](https://github.com/algoryn-io/fabric) **v0.2.0+** for shared contracts, including **Protocol Buffer** messages under `algoryn.io/fabric/gen/go/fabric/v1`.
+
+- **`ToRunEvent`** maps a `pulse.Result` into the legacy Go types `metrics.RunEvent` / `metrics.MetricSnapshot` (`algoryn.io/fabric/metrics`).
+- **`ToRunEventProto`** returns the same data as **`fabric.v1.RunEvent`** (with **`fabric.v1.MetricSnapshot`** inside), using Fabric’s **`RunEventToProto`** helper so timestamps are **`google.protobuf.Timestamp`**.
+- **`ToFabricRunEmit`** returns a matched pair: the full **`RunEvent`** protobuf and a **`fabric.v1.Event`** with **`EVENT_TYPE_RUN_COMPLETED`** (payload built with **`RunCompletedPayloadToProto`**), sharing one **`run_id`** so tools like **Beacon** can correlate summary events with detailed snapshots. The envelope timestamp uses **`timestamppb.Now()`**.
+- Set **`Config.Service`** (optional) to populate **`MetricSnapshot.service`** and the run-completed payload; use **`Config.OnFabricEmit`** to receive both protobuf messages after each run (after threshold evaluation, same ordering as **`OnResult`**).
+
+The CLI still prints human JSON for operators; wire **`OnFabricEmit`** (or call **`ToRunEventProto`**) when you need **proto/binary** or **protojson** on the wire.
 
 ---
 
@@ -33,7 +40,7 @@ Pulse depends on [`algoryn.io/fabric`](https://github.com/algoryn-io/fabric) for
 | **Latency** | **P50, P90, P95, P99** (plus min, mean, max) from the **C++ histogram**; stable under load, bounded memory. |
 | **Configuration** | **YAML** test definitions: target, phases, `maxConcurrency`, and optional **thresholds** (error rate, mean / P95 / P99 latency). |
 | **Output** | **Text** (human-readable) and **JSON** (automation, CI artifacts); combine `--json` and `--out` to mirror JSON to a file. |
-| **API** | Use **`pulse.Run`**, `OnResult` hooks, and **middleware** for chaos-style scenarios; **`RunT`** for `go test` integration. |
+| **API** | Use **`pulse.Run`**, `OnResult` hooks, optional **`OnFabricEmit`** for **Fabric protobuf** (`RunEvent` + `RunCompleted` event), and **middleware** for chaos-style scenarios; **`RunT`** for `go test` integration. |
 | **Tooling** | Optional **`mockserver`** for local demos; see [`examples/`](examples/). |
 
 ---
