@@ -12,6 +12,9 @@ target:
 maxConcurrency: 150
 saturationPolicy: drop
 
+reporting:
+  interval: 1s
+
 thresholds:
   maxDroppedRate: 0.05
   errorRate: 0.05

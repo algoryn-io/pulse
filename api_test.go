@@ -212,6 +212,60 @@ func TestRunRejectsNegativeMaxConcurrency(t *testing.T) {
 	}
 }
 
+func TestRunReturnsIntervalSnapshots(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: 140 * time.Millisecond, ArrivalRate: 50},
+			},
+			MaxConcurrency: 2,
+			Reporting: ReportingConfig{
+				Interval: 50 * time.Millisecond,
+			},
+		},
+		Scenario: func(context.Context) (int, error) {
+			return 200, nil
+		},
+	}
+
+	result, err := Run(test)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(result.Snapshots) < 2 {
+		t.Fatalf("expected multiple interval snapshots, got %+v", result.Snapshots)
+	}
+
+	var scheduled, completed int64
+	for _, snapshot := range result.Snapshots {
+		scheduled += snapshot.Scheduled
+		completed += snapshot.Completed
+	}
+	if scheduled != result.Scheduled {
+		t.Fatalf("snapshot scheduled total %d vs result %d", scheduled, result.Scheduled)
+	}
+	if completed != result.Completed {
+		t.Fatalf("snapshot completed total %d vs result %d", completed, result.Completed)
+	}
+}
+
+func TestRunRejectsNegativeReportingInterval(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1},
+			},
+			Reporting: ReportingConfig{Interval: -time.Second},
+		},
+		Scenario: func(context.Context) (int, error) { return 0, nil },
+	}
+
+	_, err := Run(test)
+	if err != errNegativeReportInterval {
+		t.Fatalf("expected %v, got %v", errNegativeReportInterval, err)
+	}
+}
+
 func TestRunRejectsSpikeOutsidePhase(t *testing.T) {
 	test := Test{
 		Config: Config{

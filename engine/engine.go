@@ -29,6 +29,14 @@ type Engine struct {
 	scenario       func(context.Context) (int, error)
 	maxConcurrency int
 	saturation     SaturationPolicy
+	reportInterval time.Duration
+}
+
+// Options contains execution settings for Engine.
+type Options struct {
+	MaxConcurrency int
+	Saturation     SaturationPolicy
+	ReportInterval time.Duration
 }
 
 // New creates an engine for the given execution inputs.
@@ -45,11 +53,20 @@ func NewWithSaturationPolicy(
 	maxConcurrency int,
 	saturation SaturationPolicy,
 ) *Engine {
+	return NewWithOptions(phases, scenario, Options{
+		MaxConcurrency: maxConcurrency,
+		Saturation:     saturation,
+	})
+}
+
+// NewWithOptions creates an engine with explicit execution settings.
+func NewWithOptions(phases []scheduler.Phase, scenario func(context.Context) (int, error), options Options) *Engine {
 	return &Engine{
 		phases:         phases,
 		scenario:       scenario,
-		maxConcurrency: maxConcurrency,
-		saturation:     saturation,
+		maxConcurrency: options.MaxConcurrency,
+		saturation:     options.Saturation,
+		reportInterval: options.ReportInterval,
 	}
 }
 
@@ -60,6 +77,8 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 	aggregator := metrics.NewAggregator()
 	defer aggregator.Close()
 	startedAt := time.Now()
+	snapshots := newSnapshotCollector(startedAt, e.reportInterval)
+	defer snapshots.close()
 	limiter := internal.NewLimiter(e.maxConcurrency)
 
 	var wg sync.WaitGroup
@@ -70,12 +89,15 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 	var maxActive atomic.Int64
 
 	wrappedScenario := func(ctx context.Context) error {
+		now := time.Now()
 		scheduled.Add(1)
+		snapshots.recordScheduled(now)
 
 		switch e.saturation {
 		case SaturationPolicyDrop:
 			if !limiter.TryAcquire() {
 				dropped.Add(1)
+				snapshots.recordDropped(now)
 				return nil
 			}
 		default:
@@ -88,6 +110,7 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 		started.Add(1)
 		currentActive := active.Add(1)
 		updateMax(&maxActive, currentActive)
+		snapshots.recordStarted(time.Now(), currentActive)
 		go func() {
 			defer wg.Done()
 			defer limiter.Release()
@@ -95,7 +118,9 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 
 			executionStartedAt := time.Now()
 			statusCode, err := e.scenario(ctx)
-			aggregator.Record(time.Since(executionStartedAt), statusCode, err)
+			latency := time.Since(executionStartedAt)
+			aggregator.Record(latency, statusCode, err)
+			snapshots.recordCompleted(time.Now(), latency, statusCode, err)
 		}()
 
 		return nil
@@ -104,12 +129,12 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 	for _, phase := range e.phases {
 		if err := scheduler.Run(ctx, phase, wrappedScenario); err != nil {
 			wg.Wait()
-			return withLoadStats(aggregator.Result(time.Since(startedAt)), &scheduled, &started, &dropped, &maxActive), err
+			return withLoadStats(aggregator.Result(time.Since(startedAt)), snapshots, &scheduled, &started, &dropped, &maxActive), err
 		}
 	}
 
 	wg.Wait()
-	return withLoadStats(aggregator.Result(time.Since(startedAt)), &scheduled, &started, &dropped, &maxActive), nil
+	return withLoadStats(aggregator.Result(time.Since(startedAt)), snapshots, &scheduled, &started, &dropped, &maxActive), nil
 }
 
 func updateMax(max *atomic.Int64, candidate int64) {
@@ -123,6 +148,7 @@ func updateMax(max *atomic.Int64, candidate int64) {
 
 func withLoadStats(
 	result metrics.Result,
+	snapshots *snapshotCollector,
 	scheduled *atomic.Int64,
 	started *atomic.Int64,
 	dropped *atomic.Int64,
@@ -136,5 +162,6 @@ func withLoadStats(
 	}
 	result.Completed = result.Total
 	result.MaxActive = maxActive.Load()
+	result.Snapshots = snapshots.snapshots(result.Duration)
 	return result
 }

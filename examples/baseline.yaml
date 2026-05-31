@@ -12,6 +12,9 @@ target:
 maxConcurrency: 4
 saturationPolicy: drop
 
+reporting:
+  interval: 1s
+
 thresholds:
   maxDroppedRate: 0.05
   maxMeanLatency: 100ms

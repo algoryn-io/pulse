@@ -11,6 +11,7 @@ import (
 	fabricv1 "algoryn.io/fabric/gen/go/fabric/v1"
 
 	"algoryn.io/pulse/engine"
+	"algoryn.io/pulse/metrics"
 	"algoryn.io/pulse/model"
 	"algoryn.io/pulse/scheduler"
 )
@@ -34,6 +35,7 @@ var (
 	errNegativeDroppedRate    = errors.New("pulse: threshold dropped rate must not be negative")
 	errDroppedRateAboveOne    = errors.New("pulse: threshold dropped rate must not be greater than 1")
 	errNegativeMaxConcurrency = errors.New("pulse: max concurrency must not be negative")
+	errNegativeReportInterval = errors.New("pulse: reporting interval must not be negative")
 )
 
 // SaturationPolicy controls what happens when all execution slots are in use.
@@ -111,6 +113,12 @@ type Thresholds struct {
 	MaxDroppedRate float64
 }
 
+// ReportingConfig controls optional interval snapshots.
+type ReportingConfig struct {
+	// Interval enables temporal snapshots when greater than zero.
+	Interval time.Duration
+}
+
 // Config holds execution configuration for a test.
 type Config struct {
 	Phases         []Phase
@@ -118,6 +126,7 @@ type Config struct {
 	// SaturationPolicy defaults to SaturationPolicyDrop.
 	SaturationPolicy SaturationPolicy
 	Thresholds       Thresholds
+	Reporting        ReportingConfig
 	// Service is optional metadata for Fabric MetricSnapshot.Service and RunCompleted payloads.
 	Service      string
 	OnResult     ResultHook     // optional; nil means no-op
@@ -163,6 +172,25 @@ type Result struct {
 	StatusCounts      map[int]int64
 	ErrorCounts       map[string]int64
 	ThresholdOutcomes []ThresholdOutcome `json:"-"`
+	Snapshots         []Snapshot
+}
+
+// Snapshot contains metrics observed during one reporting interval.
+type Snapshot struct {
+	StartedAt    time.Time
+	Duration     time.Duration
+	Total        int64
+	Failed       int64
+	RPS          float64
+	Scheduled    int64
+	Started      int64
+	Dropped      int64
+	DroppedRate  float64
+	Completed    int64
+	MaxActive    int64
+	Latency      LatencyStats
+	StatusCounts map[int]int64
+	ErrorCounts  map[string]int64
 }
 
 // ResultHook is an optional callback invoked after a test run completes.
@@ -187,11 +215,14 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 		return Result{}, err
 	}
 
-	execution := engine.NewWithSaturationPolicy(
+	execution := engine.NewWithOptions(
 		toSchedulerPhases(test.Config.Phases),
 		test.Scenario,
-		test.Config.MaxConcurrency,
-		normalizedSaturationPolicy(test.Config.SaturationPolicy),
+		engine.Options{
+			MaxConcurrency: test.Config.MaxConcurrency,
+			Saturation:     normalizedSaturationPolicy(test.Config.SaturationPolicy),
+			ReportInterval: test.Config.Reporting.Interval,
+		},
 	)
 
 	startedAt := time.Now()
@@ -209,6 +240,7 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 		MaxActive:    metricsResult.MaxActive,
 		StatusCounts: metricsResult.StatusCounts,
 		ErrorCounts:  metricsResult.ErrorCounts,
+		Snapshots:    toSnapshots(metricsResult.Snapshots),
 		Latency: LatencyStats{
 			Min:  metricsResult.Latency.Min,
 			Mean: metricsResult.Latency.Mean,
@@ -256,6 +288,10 @@ func validateTest(test Test) error {
 
 	if test.Config.MaxConcurrency < 0 {
 		return errNegativeMaxConcurrency
+	}
+
+	if test.Config.Reporting.Interval < 0 {
+		return errNegativeReportInterval
 	}
 
 	for _, phase := range test.Config.Phases {
@@ -321,6 +357,44 @@ func validateTest(test Test) error {
 	}
 
 	return nil
+}
+
+func toSnapshots(snapshots []metrics.Snapshot) []Snapshot {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	result := make([]Snapshot, len(snapshots))
+	for i, snapshot := range snapshots {
+		result[i] = Snapshot{
+			StartedAt:    snapshot.StartedAt,
+			Duration:     snapshot.Duration,
+			Total:        snapshot.Total,
+			Failed:       snapshot.Failed,
+			RPS:          snapshot.RPS,
+			Scheduled:    snapshot.Scheduled,
+			Started:      snapshot.Started,
+			Dropped:      snapshot.Dropped,
+			DroppedRate:  snapshot.DroppedRate,
+			Completed:    snapshot.Completed,
+			MaxActive:    snapshot.MaxActive,
+			Latency:      toLatencyStats(snapshot.Latency),
+			StatusCounts: snapshot.StatusCounts,
+			ErrorCounts:  snapshot.ErrorCounts,
+		}
+	}
+	return result
+}
+
+func toLatencyStats(latency metrics.LatencyStats) LatencyStats {
+	return LatencyStats{
+		Min:  latency.Min,
+		Mean: latency.Mean,
+		P50:  latency.P50,
+		P90:  latency.P90,
+		P95:  latency.P95,
+		P99:  latency.P99,
+		Max:  latency.Max,
+	}
 }
 
 func normalizedSaturationPolicy(policy SaturationPolicy) SaturationPolicy {

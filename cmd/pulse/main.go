@@ -58,12 +58,21 @@ type jsonThreshold struct {
 	Pass        bool   `json:"pass"`
 }
 
+type jsonSnapshot struct {
+	StartedAt   string           `json:"started_at"`
+	Summary     jsonSummary      `json:"summary"`
+	Latency     jsonLatency      `json:"latency"`
+	StatusCodes map[string]int64 `json:"status_codes"`
+	Errors      map[string]int64 `json:"errors"`
+}
+
 type jsonResult struct {
 	Summary     jsonSummary      `json:"summary"`
 	Latency     jsonLatency      `json:"latency"`
 	StatusCodes map[string]int64 `json:"status_codes"`
 	Errors      map[string]int64 `json:"errors"`
 	Thresholds  []jsonThreshold  `json:"thresholds"`
+	Snapshots   []jsonSnapshot   `json:"snapshots"`
 	Passed      bool             `json:"passed"`
 }
 
@@ -352,8 +361,45 @@ func toJSONResult(result pulse.Result) jsonResult {
 		StatusCodes: toJSONCountMap(result.StatusCounts),
 		Errors:      cloneStringCountMap(result.ErrorCounts),
 		Thresholds:  toJSONThresholds(result.ThresholdOutcomes),
+		Snapshots:   toJSONSnapshots(result.Snapshots),
 		Passed:      passedThresholds(result.ThresholdOutcomes),
 	}
+}
+
+func toJSONSnapshots(snapshots []pulse.Snapshot) []jsonSnapshot {
+	if len(snapshots) == 0 {
+		return []jsonSnapshot{}
+	}
+	result := make([]jsonSnapshot, len(snapshots))
+	for i, snapshot := range snapshots {
+		result[i] = jsonSnapshot{
+			StartedAt: snapshot.StartedAt.Format(time.RFC3339Nano),
+			Summary: jsonSummary{
+				Total:       snapshot.Total,
+				Failed:      snapshot.Failed,
+				RPS:         snapshot.RPS,
+				DurationMS:  durationToMillisecondsInt(snapshot.Duration),
+				Scheduled:   snapshot.Scheduled,
+				Started:     snapshot.Started,
+				Dropped:     snapshot.Dropped,
+				DroppedRate: snapshot.DroppedRate,
+				Completed:   snapshot.Completed,
+				MaxActive:   snapshot.MaxActive,
+			},
+			Latency: jsonLatency{
+				MinMS:  durationToMilliseconds(snapshot.Latency.Min),
+				P50MS:  durationToMilliseconds(snapshot.Latency.P50),
+				MeanMS: durationToMilliseconds(snapshot.Latency.Mean),
+				P90MS:  durationToMilliseconds(snapshot.Latency.P90),
+				P95MS:  durationToMilliseconds(snapshot.Latency.P95),
+				P99MS:  durationToMilliseconds(snapshot.Latency.P99),
+				MaxMS:  durationToMilliseconds(snapshot.Latency.Max),
+			},
+			StatusCodes: toJSONCountMap(snapshot.StatusCounts),
+			Errors:      cloneStringCountMap(snapshot.ErrorCounts),
+		}
+	}
+	return result
 }
 
 func durationToMilliseconds(d time.Duration) float64 {

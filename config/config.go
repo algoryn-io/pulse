@@ -40,6 +40,7 @@ var (
 	errNegativeP95Latency     = errors.New("config: threshold maxP95Latency must not be negative")
 	errNegativeP99Latency     = errors.New("config: threshold maxP99Latency must not be negative")
 	errInvalidTargetURL       = errors.New("config: target url must be an absolute http or https URL")
+	errNegativeReportInterval = errors.New("config: reporting interval must not be negative")
 )
 
 type httpClient interface {
@@ -54,6 +55,7 @@ type fileConfig struct {
 	MaxConcurrency   int              `yaml:"maxConcurrency"`
 	SaturationPolicy string           `yaml:"saturationPolicy"`
 	Thresholds       thresholdsConfig `yaml:"thresholds"`
+	Reporting        reportingConfig  `yaml:"reporting"`
 }
 
 type phaseConfig struct {
@@ -81,6 +83,10 @@ type thresholdsConfig struct {
 	MaxP95Latency  duration `yaml:"maxP95Latency"`
 	MaxP99Latency  duration `yaml:"maxP99Latency"`
 	MaxDroppedRate float64  `yaml:"maxDroppedRate"`
+}
+
+type reportingConfig struct {
+	Interval duration `yaml:"interval"`
 }
 
 type duration struct {
@@ -141,6 +147,9 @@ func Load(path string) (pulse.Test, error) {
 				MaxP99Latency:  cfg.Thresholds.MaxP99Latency.Duration,
 				MaxDroppedRate: cfg.Thresholds.MaxDroppedRate,
 			},
+			Reporting: pulse.ReportingConfig{
+				Interval: cfg.Reporting.Interval.Duration,
+			},
 		},
 		Scenario: func(ctx context.Context) (int, error) {
 			switch method {
@@ -199,6 +208,9 @@ func validateConfig(cfg fileConfig, method string) error {
 	}
 	if cfg.Target.Timeout.Duration < 0 {
 		return errNegativeTargetTimeout
+	}
+	if cfg.Reporting.Interval.Duration < 0 {
+		return errNegativeReportInterval
 	}
 
 	for _, phase := range cfg.Phases {

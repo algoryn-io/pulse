@@ -117,6 +117,8 @@ func TestLoadMapsThresholds(t *testing.T) {
 		"  method: GET\n" +
 		"  url: https://httpbin.org/get\n" +
 		"saturationPolicy: block\n" +
+		"reporting:\n" +
+		"  interval: 1s\n" +
 		"thresholds:\n" +
 		"  errorRate: 0.05\n" +
 		"  maxMeanLatency: 200ms\n" +
@@ -155,6 +157,10 @@ func TestLoadMapsThresholds(t *testing.T) {
 
 	if test.Config.SaturationPolicy != pulse.SaturationPolicyBlock {
 		t.Fatalf("expected block saturation policy, got %q", test.Config.SaturationPolicy)
+	}
+
+	if test.Config.Reporting.Interval != time.Second {
+		t.Fatalf("expected reporting interval 1s, got %v", test.Config.Reporting.Interval)
 	}
 }
 
@@ -674,6 +680,11 @@ func TestValidateConfigRejectsInvalidOperationalLimits(t *testing.T) {
 			name:    "negative timeout",
 			mutate:  func(cfg *fileConfig) { cfg.Target.Timeout.Duration = -time.Second },
 			wantErr: errNegativeTargetTimeout,
+		},
+		{
+			name:    "negative reporting interval",
+			mutate:  func(cfg *fileConfig) { cfg.Reporting.Interval.Duration = -time.Second },
+			wantErr: errNegativeReportInterval,
 		},
 		{
 			name:    "relative target URL",
