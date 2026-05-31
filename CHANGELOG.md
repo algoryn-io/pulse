@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 
 ---
+## [Unreleased]
+
+### Added
+
+- `RunContext(ctx, test)` for cancellation and global deadlines
+- Explicit saturation policies: `drop` (default) and legacy-compatible `block`
+- Load-fidelity result fields: scheduled, started, dropped, dropped rate, completed, and maximum active requests
+- `thresholds.maxDroppedRate` and `saturationPolicy` YAML settings
+
+### Changed
+
+- YAML loading now rejects unknown fields and invalid operational limits before execution
+- Spike phases must fit entirely inside their enclosing phase
+- CLI text and JSON output now report generator saturation metrics
+
+---
 ## [v0.2.0] — 2026-03-24
 
 ### Added

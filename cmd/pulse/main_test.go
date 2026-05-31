@@ -15,10 +15,16 @@ import (
 
 type decodedJSONResult struct {
 	Summary struct {
-		Total      int64   `json:"total"`
-		Failed     int64   `json:"failed"`
-		RPS        float64 `json:"rps"`
-		DurationMS int64   `json:"duration_ms"`
+		Total       int64   `json:"total"`
+		Failed      int64   `json:"failed"`
+		RPS         float64 `json:"rps"`
+		DurationMS  int64   `json:"duration_ms"`
+		Scheduled   int64   `json:"scheduled"`
+		Started     int64   `json:"started"`
+		Dropped     int64   `json:"dropped"`
+		DroppedRate float64 `json:"dropped_rate"`
+		Completed   int64   `json:"completed"`
+		MaxActive   int64   `json:"max_active"`
 	} `json:"summary"`
 	Latency struct {
 		MinMS  float64 `json:"min_ms"`
@@ -251,10 +257,16 @@ func TestRunPrintsJSON(t *testing.T) {
 
 	execute = func([]string) (pulse.Result, error) {
 		return pulse.Result{
-			Total:    3,
-			Failed:   1,
-			Duration: 2 * time.Second,
-			RPS:      1.5,
+			Total:       3,
+			Failed:      1,
+			Duration:    2 * time.Second,
+			RPS:         1.5,
+			Scheduled:   5,
+			Started:     3,
+			Dropped:     2,
+			DroppedRate: 0.4,
+			Completed:   3,
+			MaxActive:   2,
 			Latency: pulse.LatencyStats{
 				Min:  10 * time.Millisecond,
 				Max:  30 * time.Millisecond,
@@ -302,6 +314,10 @@ func TestRunPrintsJSON(t *testing.T) {
 	}
 	if got.Summary.RPS != 1.5 {
 		t.Fatalf("expected rps 1.5, got %+v", got.Summary)
+	}
+	if got.Summary.Scheduled != 5 || got.Summary.Started != 3 || got.Summary.Dropped != 2 ||
+		got.Summary.DroppedRate != 0.4 || got.Summary.Completed != 3 || got.Summary.MaxActive != 2 {
+		t.Fatalf("expected load fidelity fields, got %+v", got.Summary)
 	}
 	if got.Latency.P50MS != 18 || got.Latency.P90MS != 25 || got.Latency.P95MS != 28 || got.Latency.P99MS != 30 {
 		t.Fatalf("expected latency ms fields, got %+v", got.Latency)

@@ -11,7 +11,9 @@ target:
   body: '{"status": "updated"}'
 
 maxConcurrency: 50
+saturationPolicy: drop
 
 thresholds:
+  maxDroppedRate: 0.05
   errorRate: 0.01
   maxMeanLatency: 300ms

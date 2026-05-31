@@ -19,17 +19,17 @@ Go module before it is used as a command-line tool. The CLI is a thin
 wrapper around the public API.
 
 **Arrival-rate scheduling** — load is expressed as requests per second,
-not as a number of virtual users. This models real-world traffic more
-accurately and produces deterministic, reproducible results.
+not as a number of virtual users. The default `drop` saturation policy
+keeps scheduling independent of target latency and reports arrivals that
+cannot start immediately.
 
 **Explicit concurrency model** — goroutine creation and synchronization
 are controlled and measurable. The engine uses a semaphore to bound
 concurrency and a token bucket to pace request generation.
 
-**Low-overhead metrics** — metrics collection runs in a dedicated
-goroutine and receives results through a buffered channel. This decouples
-measurement from execution and avoids introducing noise into latency
-measurements.
+**Bounded-memory metrics** — completed scenarios record totals, exact
+min / max / mean values, and latency samples in a fixed-size native
+logarithmic histogram. Memory usage does not grow with sample count.
 
 **Composable chaos** — fault injection is implemented as a middleware
 pipeline. Each `Middleware` wraps a `Scenario` and can be composed with
@@ -52,7 +52,7 @@ pulse.Run(test)
   Scenario func         user-defined workload (optionally wrapped with middleware)
       │
       ▼
-  metrics.Aggregator    receives results via channel, computes percentiles
+  metrics.Aggregator    records results in a fixed-size native histogram
       │
       ▼
   pulse.Result          returned to the caller
@@ -72,9 +72,11 @@ load, but also more goroutines sleeping between requests. This makes
 the relationship between VUs and RPS dependent on scenario latency,
 which changes as the system degrades under load.
 
-Arrival rate is independent of latency. If the target is 50 RPS, the
-scheduler fires 50 executions per second regardless of how long each
-one takes. This produces consistent, comparable results across runs.
+Arrival rate is independent of latency when the default `drop` policy is
+used. If the target is 50 RPS, the scheduler attempts 50 executions per
+second regardless of how long each one takes. Arrivals that cannot start
+because `maxConcurrency` is exhausted are counted as dropped. This
+produces honest, comparable results across runs.
 
 ### Token bucket implementation
 
@@ -110,25 +112,33 @@ type Limiter struct {
 }
 ```
 
-`Acquire` blocks until a slot is available or the context is cancelled.
-`Release` frees the slot after the scenario completes. This prevents
-goroutine explosion under high arrival rates with slow scenarios.
+`TryAcquire` reserves a slot without waiting. It is used by the default
+`drop` saturation policy so a slow target cannot apply implicit
+backpressure to the scheduler. `Acquire` remains available for the
+optional `block` policy, which waits until a slot is available or the
+context is cancelled. `Release` frees the slot after the scenario
+completes.
+
+The engine reports `Scheduled`, `Started`, `Dropped`, `DroppedRate`,
+`Completed`, and `MaxActive`. These values make generator saturation
+visible independently of target-side failures.
 
 ---
 
 ## Metrics pipeline
 
-Results flow from scenario goroutines to the aggregator through a
-buffered channel:
+Completed scenario goroutines record directly into the aggregator:
 ```
 goroutine 1 ─┐
-goroutine 2 ─┼──► metrics channel ──► Aggregator goroutine ──► Result
+goroutine 2 ─┼──► metrics.Aggregator mutex ──► C++ histogram
 goroutine N ─┘
 ```
 
-The aggregator maintains running totals for count, errors, and latency.
-Percentiles (p50, p95, p99) are computed from a sorted slice of latency
-samples at the end of the run, not incrementally.
+The aggregator maintains running totals for count, errors, exact min /
+max / mean latency, and a native fixed-size histogram with 800
+logarithmic buckets from 1 microsecond to 60 seconds. P50, P90, P95, and
+P99 are estimates derived from that histogram. Samples outside the
+histogram range are clamped for percentile bucketing.
 
 ---
 
@@ -181,6 +191,12 @@ with a fake implementation.
 `SkipIfShort` integrates with `go test -short` to exclude load tests
 from quick test runs.
 
+Library callers that need cancellation or a global deadline should use:
+```go
+func RunContext(ctx context.Context, test Test) (Result, error)
+```
+`Run(test)` remains a convenience wrapper using `context.Background()`.
+
 ---
 
 ## Algoryn Fabric integration
@@ -199,6 +215,8 @@ func ToFabricRunEmit(service string, result Result, passed bool, startedAt time.
 ```
 
 After each run, **`Run`** records **`startedAt`** before the engine executes, evaluates thresholds, then invokes optional **`Config.OnFabricEmit(run *fabricv1.RunEvent, completed *fabricv1.Event)`** before **`OnResult`**. Use **`Config.Service`** for **`MetricSnapshot.service`** and run-completed metadata.
+
+Load-fidelity fields are exposed through `pulse.Result`, `OnResult`, and CLI JSON. They are not part of Fabric protobuf output until the shared Fabric schema defines matching fields.
 
 Conversion helpers from the **`algoryn.io/fabric`** module (**`RunEventToProto`**, **`RunCompletedPayloadToProto`**, **`MetricSnapshotToProto`**) keep field mapping consistent with the `.proto` definitions.
 

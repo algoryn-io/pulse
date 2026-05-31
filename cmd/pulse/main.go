@@ -31,10 +31,16 @@ type runOptions struct {
 }
 
 type jsonSummary struct {
-	Total      int64   `json:"total"`
-	Failed     int64   `json:"failed"`
-	RPS        float64 `json:"rps"`
-	DurationMS int64   `json:"duration_ms"`
+	Total       int64   `json:"total"`
+	Failed      int64   `json:"failed"`
+	RPS         float64 `json:"rps"`
+	DurationMS  int64   `json:"duration_ms"`
+	Scheduled   int64   `json:"scheduled"`
+	Started     int64   `json:"started"`
+	Dropped     int64   `json:"dropped"`
+	DroppedRate float64 `json:"dropped_rate"`
+	Completed   int64   `json:"completed"`
+	MaxActive   int64   `json:"max_active"`
 }
 
 type jsonLatency struct {
@@ -258,6 +264,13 @@ func writeText(w io.Writer, result pulse.Result) {
 	fmt.Fprintf(w, "Failed requests: %d\n", result.Failed)
 	fmt.Fprintf(w, "Duration: %v\n", result.Duration)
 	fmt.Fprintf(w, "RPS: %.2f\n", result.RPS)
+	if result.Scheduled > 0 {
+		fmt.Fprintf(w, "Scheduled arrivals: %d\n", result.Scheduled)
+		fmt.Fprintf(w, "Started requests: %d\n", result.Started)
+		fmt.Fprintf(w, "Dropped arrivals: %d (%.2f%%)\n", result.Dropped, result.DroppedRate*100)
+		fmt.Fprintf(w, "Completed requests: %d\n", result.Completed)
+		fmt.Fprintf(w, "Max active requests: %d\n", result.MaxActive)
+	}
 
 	fmt.Fprintf(w, "Min latency: %v\n", result.Latency.Min)
 	fmt.Fprintf(w, "P50 latency: %v\n", result.Latency.P50)
@@ -316,10 +329,16 @@ func writeJSON(w io.Writer, result pulse.Result) error {
 func toJSONResult(result pulse.Result) jsonResult {
 	return jsonResult{
 		Summary: jsonSummary{
-			Total:      result.Total,
-			Failed:     result.Failed,
-			RPS:        result.RPS,
-			DurationMS: durationToMillisecondsInt(result.Duration),
+			Total:       result.Total,
+			Failed:      result.Failed,
+			RPS:         result.RPS,
+			DurationMS:  durationToMillisecondsInt(result.Duration),
+			Scheduled:   result.Scheduled,
+			Started:     result.Started,
+			Dropped:     result.Dropped,
+			DroppedRate: result.DroppedRate,
+			Completed:   result.Completed,
+			MaxActive:   result.MaxActive,
 		},
 		Latency: jsonLatency{
 			MinMS:  durationToMilliseconds(result.Latency.Min),

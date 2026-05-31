@@ -99,6 +99,142 @@ func TestRunReturnsErrorWhenPhaseArrivalRateIsNotPositive(t *testing.T) {
 	}
 }
 
+func TestRunContextPropagatesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	passed := make(chan bool, 1)
+
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 100},
+			},
+			MaxConcurrency: 1,
+			OnResult: func(_ Result, resultPassed bool) {
+				passed <- resultPassed
+			},
+		},
+		Scenario: func(ctx context.Context) (int, error) {
+			close(started)
+			<-ctx.Done()
+			return 0, ctx.Err()
+		},
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := RunContext(ctx, test)
+		done <- err
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scenario to start")
+	}
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected %v, got %v", context.Canceled, err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for RunContext cancellation")
+	}
+
+	if resultPassed := <-passed; resultPassed {
+		t.Fatal("expected canceled run to invoke hook with passed=false")
+	}
+}
+
+func TestRunDefaultsToDropSaturationPolicy(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 100},
+			},
+			MaxConcurrency: 1,
+		},
+		Scenario: func(context.Context) (int, error) {
+			time.Sleep(100 * time.Millisecond)
+			return 0, nil
+		},
+	}
+
+	result, err := Run(test)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Dropped == 0 {
+		t.Fatalf("expected dropped arrivals under saturation, got %+v", result)
+	}
+	if result.Scheduled != result.Started+result.Dropped {
+		t.Fatalf("scheduled arrivals do not reconcile: %+v", result)
+	}
+	if result.Completed != result.Total {
+		t.Fatalf("completed %d vs total %d", result.Completed, result.Total)
+	}
+}
+
+func TestRunRejectsUnsupportedSaturationPolicy(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1},
+			},
+			SaturationPolicy: SaturationPolicy("queue"),
+		},
+		Scenario: func(context.Context) (int, error) { return 0, nil },
+	}
+
+	_, err := Run(test)
+	if err != errUnsupportedSaturation {
+		t.Fatalf("expected %v, got %v", errUnsupportedSaturation, err)
+	}
+}
+
+func TestRunRejectsNegativeMaxConcurrency(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1},
+			},
+			MaxConcurrency: -1,
+		},
+		Scenario: func(context.Context) (int, error) { return 0, nil },
+	}
+
+	_, err := Run(test)
+	if err != errNegativeMaxConcurrency {
+		t.Fatalf("expected %v, got %v", errNegativeMaxConcurrency, err)
+	}
+}
+
+func TestRunRejectsSpikeOutsidePhase(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{
+					Type:          PhaseTypeSpike,
+					Duration:      time.Second,
+					From:          10,
+					To:            20,
+					SpikeAt:       800 * time.Millisecond,
+					SpikeDuration: 300 * time.Millisecond,
+				},
+			},
+		},
+		Scenario: func(context.Context) (int, error) { return 0, nil },
+	}
+
+	_, err := Run(test)
+	if err != errInvalidSpikeConfig {
+		t.Fatalf("expected %v, got %v", errInvalidSpikeConfig, err)
+	}
+}
+
 func TestRunReturnsErrorWhenRampEndpointsAreInvalid(t *testing.T) {
 	test := Test{
 		Config: Config{
@@ -341,6 +477,60 @@ func TestThresholdViolationErrorFormatsErrorRateNicely(t *testing.T) {
 	want := "pulse: threshold violated (error_rate < 0.1): got 1.000 (100.0%), limit 0.100 (10.0%)"
 	if err != want {
 		t.Fatalf("Error() = %q, want %q", err, want)
+	}
+}
+
+func TestRunFailsWhenDroppedRateThresholdIsViolated(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 100},
+			},
+			MaxConcurrency: 1,
+			Thresholds: Thresholds{
+				MaxDroppedRate: 0.1,
+			},
+		},
+		Scenario: func(context.Context) (int, error) {
+			time.Sleep(100 * time.Millisecond)
+			return 0, nil
+		},
+	}
+
+	result, err := Run(test)
+	if err == nil {
+		t.Fatal("expected threshold error, got nil")
+	}
+	if result.DroppedRate <= 0.1 {
+		t.Fatalf("expected dropped rate above threshold, got %+v", result)
+	}
+	var tv *ThresholdViolationError
+	if !errors.As(err, &tv) {
+		t.Fatalf("expected *ThresholdViolationError, got %v", err)
+	}
+	if tv.Description != "dropped_rate < 0.1" {
+		t.Fatalf("unexpected description %q", tv.Description)
+	}
+}
+
+func TestRunRejectsInvalidDroppedRateThreshold(t *testing.T) {
+	base := Test{
+		Config: Config{
+			Phases: []Phase{
+				{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1},
+			},
+		},
+		Scenario: func(context.Context) (int, error) { return 0, nil },
+	}
+
+	base.Config.Thresholds.MaxDroppedRate = -0.1
+	if _, err := Run(base); err != errNegativeDroppedRate {
+		t.Fatalf("expected %v, got %v", errNegativeDroppedRate, err)
+	}
+
+	base.Config.Thresholds.MaxDroppedRate = 1.1
+	if _, err := Run(base); err != errDroppedRateAboveOne {
+		t.Fatalf("expected %v, got %v", errDroppedRateAboveOne, err)
 	}
 }
 

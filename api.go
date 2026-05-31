@@ -30,6 +30,22 @@ var (
 	errNegativeMeanLatency    = errors.New("pulse: threshold mean latency must not be negative")
 	errNegativeP95Latency     = errors.New("pulse: threshold p95 latency must not be negative")
 	errNegativeP99Latency     = errors.New("pulse: threshold p99 latency must not be negative")
+	errUnsupportedSaturation  = errors.New("pulse: unsupported saturation policy")
+	errNegativeDroppedRate    = errors.New("pulse: threshold dropped rate must not be negative")
+	errDroppedRateAboveOne    = errors.New("pulse: threshold dropped rate must not be greater than 1")
+	errNegativeMaxConcurrency = errors.New("pulse: max concurrency must not be negative")
+)
+
+// SaturationPolicy controls what happens when all execution slots are in use.
+type SaturationPolicy = engine.SaturationPolicy
+
+const (
+	// SaturationPolicyDrop preserves the configured arrival rate by discarding
+	// arrivals that cannot start immediately.
+	SaturationPolicyDrop = engine.SaturationPolicyDrop
+	// SaturationPolicyBlock waits for capacity, applying backpressure to the
+	// scheduler. This preserves the behavior of earlier Pulse versions.
+	SaturationPolicyBlock = engine.SaturationPolicyBlock
 )
 
 // Scenario is the user-defined workload executed by Pulse.
@@ -92,13 +108,16 @@ type Thresholds struct {
 	MaxMeanLatency time.Duration
 	MaxP95Latency  time.Duration
 	MaxP99Latency  time.Duration
+	MaxDroppedRate float64
 }
 
 // Config holds execution configuration for a test.
 type Config struct {
 	Phases         []Phase
 	MaxConcurrency int
-	Thresholds     Thresholds
+	// SaturationPolicy defaults to SaturationPolicyDrop.
+	SaturationPolicy SaturationPolicy
+	Thresholds       Thresholds
 	// Service is optional metadata for Fabric MetricSnapshot.Service and RunCompleted payloads.
 	Service      string
 	OnResult     ResultHook     // optional; nil means no-op
@@ -134,6 +153,12 @@ type Result struct {
 	Failed            int64
 	Duration          time.Duration
 	RPS               float64
+	Scheduled         int64
+	Started           int64
+	Dropped           int64
+	DroppedRate       float64
+	Completed         int64
+	MaxActive         int64
 	Latency           LatencyStats
 	StatusCounts      map[int]int64
 	ErrorCounts       map[string]int64
@@ -142,7 +167,7 @@ type Result struct {
 
 // ResultHook is an optional callback invoked after a test run completes.
 // result contains the full aggregated metrics.
-// passed is true when all configured thresholds were met.
+// passed is true when execution completed and all configured thresholds were met.
 type ResultHook func(result Result, passed bool)
 
 // FabricEmitHook is invoked after threshold evaluation with protobuf contracts for the Fabric stack.
@@ -150,20 +175,38 @@ type ResultHook func(result Result, passed bool)
 type FabricEmitHook func(run *fabricv1.RunEvent, completed *fabricv1.Event)
 
 // Run validates the test definition and executes it through the engine.
+// Use RunContext when the caller needs cancellation or a global timeout.
 func Run(test Test) (Result, error) {
+	return RunContext(context.Background(), test)
+}
+
+// RunContext validates the test definition and executes it through the engine.
+// The context controls scheduling and in-flight scenario executions.
+func RunContext(ctx context.Context, test Test) (Result, error) {
 	if err := validateTest(test); err != nil {
 		return Result{}, err
 	}
 
-	execution := engine.New(toSchedulerPhases(test.Config.Phases), test.Scenario, test.Config.MaxConcurrency)
+	execution := engine.NewWithSaturationPolicy(
+		toSchedulerPhases(test.Config.Phases),
+		test.Scenario,
+		test.Config.MaxConcurrency,
+		normalizedSaturationPolicy(test.Config.SaturationPolicy),
+	)
 
 	startedAt := time.Now()
-	metricsResult, err := execution.Run(context.Background())
+	metricsResult, err := execution.Run(ctx)
 	result := Result{
 		Total:        metricsResult.Total,
 		Failed:       metricsResult.Failed,
 		Duration:     metricsResult.Duration,
 		RPS:          metricsResult.RPS,
+		Scheduled:    metricsResult.Scheduled,
+		Started:      metricsResult.Started,
+		Dropped:      metricsResult.Dropped,
+		DroppedRate:  metricsResult.DroppedRate,
+		Completed:    metricsResult.Completed,
+		MaxActive:    metricsResult.MaxActive,
 		StatusCounts: metricsResult.StatusCounts,
 		ErrorCounts:  metricsResult.ErrorCounts,
 		Latency: LatencyStats{
@@ -180,7 +223,7 @@ func Run(test Test) (Result, error) {
 	outcomes, threshErr := evaluateThresholds(test.Config.Thresholds, result)
 	result.ThresholdOutcomes = outcomes
 
-	passed := threshErr == nil
+	passed := err == nil && threshErr == nil
 	if test.Config.OnFabricEmit != nil {
 		emit := ToFabricRunEmit(test.Config.Service, result, passed, startedAt)
 		test.Config.OnFabricEmit(emit.RunEvent, emit.RunCompleted)
@@ -204,6 +247,15 @@ func validateTest(test Test) error {
 
 	if test.Scenario == nil {
 		return errNilScenario
+	}
+
+	if policy := test.Config.SaturationPolicy; policy != "" &&
+		policy != SaturationPolicyDrop && policy != SaturationPolicyBlock {
+		return errUnsupportedSaturation
+	}
+
+	if test.Config.MaxConcurrency < 0 {
+		return errNegativeMaxConcurrency
 	}
 
 	for _, phase := range test.Config.Phases {
@@ -231,7 +283,8 @@ func validateTest(test Test) error {
 				return errInvalidStepConfig
 			}
 		case p.IsSpike():
-			if phase.From <= 0 || phase.To <= 0 || phase.SpikeDuration <= 0 {
+			if phase.From <= 0 || phase.To <= 0 || phase.SpikeAt < 0 ||
+				phase.SpikeDuration <= 0 || phase.SpikeAt+phase.SpikeDuration > phase.Duration {
 				return errInvalidSpikeConfig
 			}
 		default:
@@ -259,7 +312,22 @@ func validateTest(test Test) error {
 		return errNegativeP99Latency
 	}
 
+	if test.Config.Thresholds.MaxDroppedRate < 0 {
+		return errNegativeDroppedRate
+	}
+
+	if test.Config.Thresholds.MaxDroppedRate > 1 {
+		return errDroppedRateAboveOne
+	}
+
 	return nil
+}
+
+func normalizedSaturationPolicy(policy SaturationPolicy) SaturationPolicy {
+	if policy == "" {
+		return SaturationPolicyDrop
+	}
+	return policy
 }
 
 func evaluateThresholds(thresholds Thresholds, result Result) ([]ThresholdOutcome, error) {
@@ -322,6 +390,21 @@ func evaluateThresholds(thresholds Thresholds, result Result) ([]ThresholdOutcom
 				Description: desc,
 				Actual:      result.Latency.P99,
 				Limit:       thresholds.MaxP99Latency,
+			})
+		} else {
+			outcomes = append(outcomes, ThresholdOutcome{Pass: true, Description: desc})
+		}
+	}
+
+	if thresholds.MaxDroppedRate > 0 {
+		limitStr := strconv.FormatFloat(thresholds.MaxDroppedRate, 'f', -1, 64)
+		desc := "dropped_rate < " + limitStr
+		if result.DroppedRate > thresholds.MaxDroppedRate {
+			outcomes = append(outcomes, ThresholdOutcome{Pass: false, Description: desc})
+			errs = append(errs, &ThresholdViolationError{
+				Description: desc,
+				Actual:      result.DroppedRate,
+				Limit:       thresholds.MaxDroppedRate,
 			})
 		} else {
 			outcomes = append(outcomes, ThresholdOutcome{Pass: true, Description: desc})

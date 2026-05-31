@@ -145,6 +145,58 @@ func TestEngineRunLimitsConcurrency(t *testing.T) {
 	if got := atomic.LoadInt32(&maxRunning); got > 2 {
 		t.Fatalf("expected max concurrency 2, got %d", got)
 	}
+	if result.MaxActive > 2 {
+		t.Fatalf("expected reported max active <= 2, got %d", result.MaxActive)
+	}
+	if result.Completed != result.Total || result.Started != result.Completed {
+		t.Fatalf("unexpected load stats: %+v", result)
+	}
+}
+
+func TestEngineRunDropsArrivalsWithoutBlockingScheduler(t *testing.T) {
+	engine := NewWithSaturationPolicy([]scheduler.Phase{
+		{Type: model.PhaseTypeConstant, Duration: 80 * time.Millisecond, ArrivalRate: 100},
+	}, func(context.Context) (int, error) {
+		time.Sleep(100 * time.Millisecond)
+		return 0, nil
+	}, 1, SaturationPolicyDrop)
+
+	result, err := engine.Run(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Dropped == 0 {
+		t.Fatalf("expected dropped arrivals under saturation, got %+v", result)
+	}
+	if result.Scheduled != result.Started+result.Dropped {
+		t.Fatalf("scheduled arrivals do not reconcile: %+v", result)
+	}
+	if result.Started != 1 || result.Completed != 1 || result.Total != 1 {
+		t.Fatalf("expected one completed execution, got %+v", result)
+	}
+	if result.MaxActive != 1 {
+		t.Fatalf("expected max active 1, got %d", result.MaxActive)
+	}
+}
+
+func TestEngineRunBlockPolicyDoesNotDropArrivals(t *testing.T) {
+	engine := NewWithSaturationPolicy([]scheduler.Phase{
+		{Type: model.PhaseTypeConstant, Duration: 40 * time.Millisecond, ArrivalRate: 100},
+	}, func(context.Context) (int, error) {
+		time.Sleep(60 * time.Millisecond)
+		return 0, nil
+	}, 1, SaturationPolicyBlock)
+
+	result, err := engine.Run(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Dropped != 0 {
+		t.Fatalf("expected no dropped arrivals, got %+v", result)
+	}
+	if result.Scheduled != result.Started || result.Started != result.Completed {
+		t.Fatalf("unexpected load stats: %+v", result)
+	}
 }
 
 func TestEngineRunWaitsForRunningExecutions(t *testing.T) {

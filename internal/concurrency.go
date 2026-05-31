@@ -28,6 +28,17 @@ func (l *Limiter) Acquire(ctx context.Context) error {
 	}
 }
 
+// TryAcquire reserves an execution slot without blocking. It returns false
+// when all slots are in use.
+func (l *Limiter) TryAcquire() bool {
+	select {
+	case l.slots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
 // Release frees an execution slot.
 func (l *Limiter) Release() {
 	<-l.slots

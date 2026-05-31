@@ -26,7 +26,8 @@ func (e *ThresholdViolationError) Error() string {
 func formatThresholdValue(description string, value any) string {
 	switch v := value.(type) {
 	case float64:
-		if strings.HasPrefix(description, "error_rate < ") {
+		if strings.HasPrefix(description, "error_rate < ") ||
+			strings.HasPrefix(description, "dropped_rate < ") {
 			return fmt.Sprintf("%.3f (%.1f%%)", v, v*100)
 		}
 		return fmt.Sprintf("%.3f", v)

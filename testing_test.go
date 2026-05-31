@@ -4,8 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -33,13 +31,6 @@ func (f *fakeT) Skip(args ...any) {
 }
 
 func TestRunTPassesWithoutThresholds(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	client := &http.Client{Timeout: time.Second}
-
 	test := Test{
 		Config: Config{
 			Phases: []Phase{
@@ -47,20 +38,7 @@ func TestRunTPassesWithoutThresholds(t *testing.T) {
 			},
 			MaxConcurrency: 2,
 		},
-		Scenario: func(ctx context.Context) (int, error) {
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
-			if err != nil {
-				return 0, err
-			}
-
-			resp, err := client.Do(req)
-			if err != nil {
-				return 0, err
-			}
-			defer resp.Body.Close()
-
-			return resp.StatusCode, nil
-		},
+		Scenario: newHealthyHTTPScenario(t),
 	}
 
 	result := RunT(t, test)

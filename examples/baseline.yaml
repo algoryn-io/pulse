@@ -10,8 +10,10 @@ target:
   url: http://localhost:8080
 
 maxConcurrency: 4
+saturationPolicy: drop
 
 thresholds:
+  maxDroppedRate: 0.05
   maxMeanLatency: 100ms
   maxP95Latency: 150ms
   maxP99Latency: 200ms
