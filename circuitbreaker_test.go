@@ -8,6 +8,28 @@ import (
 	"time"
 )
 
+func TestWithCircuitBreakerRejectsInvalidParameters(t *testing.T) {
+	tests := []struct {
+		name string
+		call func()
+	}{
+		{name: "threshold above one", call: func() { WithCircuitBreaker(1.1, time.Second, time.Second) }},
+		{name: "non-positive window", call: func() { WithCircuitBreaker(0.5, 0, time.Second) }},
+		{name: "non-positive timeout", call: func() { WithCircuitBreaker(0.5, time.Second, 0) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("expected panic")
+				}
+			}()
+			tt.call()
+		})
+	}
+}
+
 func TestWithCircuitBreakerStartsClosed(t *testing.T) {
 	scenario := Apply(func(context.Context) (int, error) {
 		return http.StatusOK, nil

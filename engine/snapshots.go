@@ -84,8 +84,9 @@ func (c *snapshotCollector) snapshots(duration time.Duration) []metrics.Snapshot
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	count := int64((duration + c.interval - 1) / c.interval)
+	count := int64((duration-1)/c.interval + 1)
 	result := make([]metrics.Snapshot, count)
+	var active int64
 	for i := int64(0); i < count; i++ {
 		windowDuration := c.interval
 		if remaining := duration - time.Duration(i)*c.interval; remaining < windowDuration {
@@ -103,6 +104,9 @@ func (c *snapshotCollector) snapshots(duration time.Duration) []metrics.Snapshot
 				snapshot.DroppedRate = float64(snapshot.Dropped) / float64(snapshot.Scheduled)
 			}
 			snapshot.MaxActive = window.maxActive
+			if active > snapshot.MaxActive {
+				snapshot.MaxActive = active
+			}
 			if window.aggregator != nil {
 				aggregated := window.aggregator.Result(windowDuration)
 				snapshot.Total = aggregated.Total
@@ -113,6 +117,9 @@ func (c *snapshotCollector) snapshots(duration time.Duration) []metrics.Snapshot
 				snapshot.StatusCounts = aggregated.StatusCounts
 				snapshot.ErrorCounts = aggregated.ErrorCounts
 			}
+			active += window.started - snapshot.Completed
+		} else if active > 0 {
+			snapshot.MaxActive = active
 		}
 		result[i] = snapshot
 	}

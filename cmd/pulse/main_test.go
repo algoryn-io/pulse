@@ -450,6 +450,32 @@ func TestRunWritesJSONToFile(t *testing.T) {
 	}
 }
 
+func TestRunWritesPassedFalseToFileOnRuntimeFailure(t *testing.T) {
+	previousExecute := execute
+	t.Cleanup(func() { execute = previousExecute })
+	execute = func([]string) (pulse.Result, error) {
+		return pulse.Result{Total: 1}, errors.New("runtime failure")
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "result.json")
+	err := run([]string{"run", "--out", outputPath}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected runtime error")
+	}
+
+	data, readErr := os.ReadFile(outputPath)
+	if readErr != nil {
+		t.Fatalf("read output: %v", readErr)
+	}
+	var got decodedJSONResult
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if got.Passed {
+		t.Fatalf("expected passed=false, got %+v", got)
+	}
+}
+
 func TestRunCLISuppressesThresholdOnlyErrorOnStderr(t *testing.T) {
 	previousExecute := execute
 	t.Cleanup(func() {

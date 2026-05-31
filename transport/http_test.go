@@ -270,6 +270,22 @@ func TestHTTPClientRespectsContextCancellation(t *testing.T) {
 	}
 }
 
+func TestHTTPClientRejectsOversizedResponseBody(t *testing.T) {
+	client := NewHTTPClientWith(HTTPClientConfig{MaxResponseBytes: 3})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("pulse"))
+	}))
+	defer srv.Close()
+
+	code, err := client.Get(context.Background(), srv.URL)
+	if code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, code)
+	}
+	if !errors.Is(err, ErrResponseBodyTooLarge) {
+		t.Fatalf("expected %v, got %v", ErrResponseBodyTooLarge, err)
+	}
+}
+
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {

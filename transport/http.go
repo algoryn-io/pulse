@@ -2,37 +2,51 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"time"
 )
 
+const (
+	DefaultTimeout          = 30 * time.Second
+	DefaultMaxResponseBytes = int64(1 << 20)
+)
+
+var ErrResponseBodyTooLarge = errors.New("pulse: response body exceeds configured limit")
+
 // HTTPClientConfig holds optional HTTP client settings for Pulse scenarios.
 type HTTPClientConfig struct {
-	Timeout time.Duration
-	Headers map[string]string
+	Timeout          time.Duration
+	MaxResponseBytes int64
+	Headers          map[string]string
 }
 
 // HTTPClient is the minimal HTTP transport for Pulse scenarios.
 type HTTPClient struct {
-	client  *http.Client
-	headers map[string]string
+	client           *http.Client
+	headers          map[string]string
+	maxResponseBytes int64
 }
 
-// NewHTTPClient creates an HTTP client backed by the default net/http client.
+// NewHTTPClient creates an HTTP client with defensive defaults.
 func NewHTTPClient() *HTTPClient {
 	return NewHTTPClientWith(HTTPClientConfig{})
 }
 
-// NewHTTPClientWith builds a client using the given config. A zero config
-// matches NewHTTPClient: default client and no extra headers.
+// NewHTTPClientWith builds a client using the given config. Zero timeout and
+// response body limit values use defensive defaults.
 func NewHTTPClientWith(cfg HTTPClientConfig) *HTTPClient {
-	if cfg.Timeout == 0 && len(cfg.Headers) == 0 {
-		return &HTTPClient{client: http.DefaultClient}
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = DefaultTimeout
+	}
+	if cfg.MaxResponseBytes <= 0 {
+		cfg.MaxResponseBytes = DefaultMaxResponseBytes
 	}
 	return &HTTPClient{
-		client:  &http.Client{Timeout: cfg.Timeout},
-		headers: cloneHeaderMap(cfg.Headers),
+		client:           &http.Client{Timeout: cfg.Timeout},
+		headers:          cloneHeaderMap(cfg.Headers),
+		maxResponseBytes: cfg.MaxResponseBytes,
 	}
 }
 
@@ -100,8 +114,17 @@ func (c *HTTPClient) do(ctx context.Context, method, url string, body io.Reader)
 	}
 	defer resp.Body.Close()
 
-	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+	maxResponseBytes := c.maxResponseBytes
+	if maxResponseBytes <= 0 {
+		maxResponseBytes = DefaultMaxResponseBytes
+	}
+	limited := io.LimitReader(resp.Body, maxResponseBytes+1)
+	written, err := io.Copy(io.Discard, limited)
+	if err != nil {
 		return resp.StatusCode, err
+	}
+	if written > maxResponseBytes {
+		return resp.StatusCode, ErrResponseBodyTooLarge
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {

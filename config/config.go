@@ -41,7 +41,13 @@ var (
 	errNegativeP99Latency     = errors.New("config: threshold maxP99Latency must not be negative")
 	errInvalidTargetURL       = errors.New("config: target url must be an absolute http or https URL")
 	errNegativeReportInterval = errors.New("config: reporting interval must not be negative")
+	errReportIntervalTooSmall = errors.New("config: reporting interval must be at least 10ms when enabled")
+	errMaxConcurrencyTooHigh  = errors.New("config: maxConcurrency must not exceed 1000000")
 )
+
+const minReportingInterval = 10 * time.Millisecond
+const maxConcurrency = 1_000_000
+const maxConfigBytes = 1 << 20
 
 type httpClient interface {
 	Get(ctx context.Context, url string) (int, error)
@@ -116,9 +122,18 @@ func (d *duration) UnmarshalYAML(node *yaml.Node) error {
 
 // Load reads a YAML file and maps it into a Pulse test definition.
 func Load(path string) (pulse.Test, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return pulse.Test{}, err
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, maxConfigBytes+1))
+	if err != nil {
+		return pulse.Test{}, err
+	}
+	if len(data) > maxConfigBytes {
+		return pulse.Test{}, errors.New("config: file must not exceed 1MiB")
 	}
 
 	var cfg fileConfig
@@ -185,6 +200,9 @@ func validateConfig(cfg fileConfig, method string) error {
 	if cfg.MaxConcurrency < 0 {
 		return errNegativeMaxConcurrency
 	}
+	if cfg.MaxConcurrency > maxConcurrency {
+		return errMaxConcurrencyTooHigh
+	}
 	if cfg.Thresholds.ErrorRate < 0 {
 		return errNegativeErrorRate
 	}
@@ -211,6 +229,9 @@ func validateConfig(cfg fileConfig, method string) error {
 	}
 	if cfg.Reporting.Interval.Duration < 0 {
 		return errNegativeReportInterval
+	}
+	if cfg.Reporting.Interval.Duration > 0 && cfg.Reporting.Interval.Duration < minReportingInterval {
+		return errReportIntervalTooSmall
 	}
 
 	for _, phase := range cfg.Phases {

@@ -17,7 +17,7 @@ const (
 
 func main() {
 	mode := flag.String("mode", modeHealthy, "server mode: healthy, mixed-errors, slow")
-	addr := flag.String("addr", ":8080", "listen address")
+	addr := flag.String("addr", "127.0.0.1:8080", "listen address")
 	flag.Parse()
 
 	handler, err := newHandler(*mode)
@@ -26,7 +26,15 @@ func main() {
 	}
 
 	fmt.Printf("mock server listening on %s (mode=%s)\n", *addr, *mode)
-	log.Fatal(http.ListenAndServe(*addr, handler))
+	server := &http.Server{
+		Addr:              *addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
+	log.Fatal(server.ListenAndServe())
 }
 
 func newHandler(mode string) (http.Handler, error) {

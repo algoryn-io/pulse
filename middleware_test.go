@@ -10,6 +10,30 @@ import (
 	"time"
 )
 
+func TestMiddlewaresRejectInvalidParameters(t *testing.T) {
+	tests := []struct {
+		name string
+		call func()
+	}{
+		{name: "negative latency", call: func() { WithLatency(-time.Second, 1) }},
+		{name: "rate above one", call: func() { WithErrorRate(1.1) }},
+		{name: "inverted jitter", call: func() { WithJitter(time.Second, time.Millisecond, 1) }},
+		{name: "non-positive timeout", call: func() { WithTimeout(0) }},
+		{name: "negative retries", call: func() { WithRetry(-1, 0) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("expected panic")
+				}
+			}()
+			tt.call()
+		})
+	}
+}
+
 func TestWithLatencyAddsLatencyWhenRateIsOne(t *testing.T) {
 	scenario := Apply(func(context.Context) (int, error) {
 		return http.StatusOK, nil

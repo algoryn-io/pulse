@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -12,10 +15,13 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: 1.26.3
 
       - name: Go version
         run: go version
 
       - name: Run tests
         run: go test ./...
+
+      - name: Run vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

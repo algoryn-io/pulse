@@ -3,6 +3,7 @@ package pulse
 import (
 	"context"
 	"errors"
+	"math"
 	"math/rand"
 	"time"
 )
@@ -37,6 +38,8 @@ func Apply(scenario Scenario, middlewares ...Middleware) Scenario {
 // WithLatency returns a Middleware that adds artificial latency to
 // a percentage of requests.
 func WithLatency(d time.Duration, rate float64) Middleware {
+	validateDuration("latency", d)
+	validateRate(rate)
 	return func(next Scenario) Scenario {
 		return func(ctx context.Context) (int, error) {
 			if rand.Float64() < rate {
@@ -58,6 +61,7 @@ func WithLatency(d time.Duration, rate float64) Middleware {
 // WithErrorRate returns a Middleware that causes a percentage of requests
 // to fail without calling the underlying Scenario.
 func WithErrorRate(rate float64) Middleware {
+	validateRate(rate)
 	return func(next Scenario) Scenario {
 		return func(ctx context.Context) (int, error) {
 			if rand.Float64() < rate {
@@ -72,6 +76,12 @@ func WithErrorRate(rate float64) Middleware {
 // WithJitter returns a Middleware that adds random latency between
 // min and max to a percentage of requests.
 func WithJitter(min, max time.Duration, rate float64) Middleware {
+	validateDuration("minimum jitter", min)
+	validateDuration("maximum jitter", max)
+	validateRate(rate)
+	if max < min {
+		panic("pulse: maximum jitter must not be less than minimum jitter")
+	}
 	return func(next Scenario) Scenario {
 		return func(ctx context.Context) (int, error) {
 			if rand.Float64() < rate {
@@ -97,6 +107,9 @@ func WithJitter(min, max time.Duration, rate float64) Middleware {
 // WithTimeout returns a Middleware that enforces a maximum duration
 // for each scenario execution.
 func WithTimeout(d time.Duration) Middleware {
+	if d <= 0 {
+		panic("pulse: timeout must be positive")
+	}
 	return func(next Scenario) Scenario {
 		return func(ctx context.Context) (int, error) {
 			ctx, cancel := context.WithTimeout(ctx, d)
@@ -110,6 +123,7 @@ func WithTimeout(d time.Duration) Middleware {
 // code to be returned for a percentage of requests, without calling
 // the underlying Scenario.
 func WithStatusCode(code int, rate float64) Middleware {
+	validateRate(rate)
 	return func(next Scenario) Scenario {
 		return func(ctx context.Context) (int, error) {
 			if rand.Float64() < rate {
@@ -123,6 +137,10 @@ func WithStatusCode(code int, rate float64) Middleware {
 // WithRetry returns a Middleware that retries a failed scenario
 // up to n times with a fixed backoff between attempts.
 func WithRetry(n int, backoff time.Duration) Middleware {
+	if n < 0 {
+		panic("pulse: retry count must not be negative")
+	}
+	validateDuration("retry backoff", backoff)
 	return func(next Scenario) Scenario {
 		return func(ctx context.Context) (int, error) {
 			var (
@@ -168,5 +186,17 @@ func WithBulkhead(maxConcurrent int) Middleware {
 			defer func() { <-sem }()
 			return next(ctx)
 		}
+	}
+}
+
+func validateRate(rate float64) {
+	if math.IsNaN(rate) || rate < 0 || rate > 1 {
+		panic("pulse: middleware rate must be between 0 and 1")
+	}
+}
+
+func validateDuration(name string, d time.Duration) {
+	if d < 0 {
+		panic("pulse: " + name + " must not be negative")
 	}
 }

@@ -62,3 +62,17 @@ func TestSnapshotCollectorDisabledWhenIntervalIsZero(t *testing.T) {
 		t.Fatalf("expected nil collector, got %+v", collector)
 	}
 }
+
+func TestSnapshotCollectorCarriesActiveRequestsIntoFollowingWindows(t *testing.T) {
+	startedAt := time.Now()
+	collector := newSnapshotCollector(startedAt, 100*time.Millisecond)
+	t.Cleanup(collector.close)
+
+	collector.recordStarted(startedAt.Add(10*time.Millisecond), 1)
+	collector.recordCompleted(startedAt.Add(250*time.Millisecond), 240*time.Millisecond, 200, nil)
+
+	snapshots := collector.snapshots(300 * time.Millisecond)
+	if snapshots[1].MaxActive != 1 || snapshots[2].MaxActive != 1 {
+		t.Fatalf("expected active request to be carried across windows, got %+v", snapshots)
+	}
+}

@@ -131,9 +131,11 @@ Run against a live target or, for a quick check, start the bundled mock in anoth
 
 The JSON report includes `summary` (totals, RPS, `duration_ms`, scheduled / started / dropped / completed requests, dropped rate, and maximum active requests), `latency` with **`min_ms`**, **`p50_ms`**, **`mean_ms`**, **`p90_ms`**, **`p95_ms`**, **`p99_ms`**, **`max_ms`**, `status_codes`, `errors`, per-threshold rows, optional interval `snapshots`, and `passed`.
 
-Set `reporting.interval` to enable temporal snapshots. Windows are aligned to the run start. Scheduled arrivals, started requests, and dropped arrivals belong to the interval where they are handled. Completed requests, failures, status codes, errors, and latency belong to the interval where execution finishes. The text report remains a concise global summary; snapshots are emitted in JSON for automation and visualization.
+Set `reporting.interval` to enable temporal snapshots. Enabled intervals must be at least `10ms`, and a run may generate at most `10,000` snapshots. Windows are aligned to the run start. Scheduled arrivals, started requests, and dropped arrivals belong to the interval where they are handled. Completed requests, failures, status codes, errors, and latency belong to the interval where execution finishes. The text report remains a concise global summary; snapshots are emitted in JSON for automation and visualization.
 
-`maxConcurrency: 0` retains the library zero-value behavior and runs with one execution slot. Set it explicitly for load campaigns. Unknown YAML fields, negative concurrency, invalid saturation policies, out-of-range spike windows, invalid URLs, and invalid threshold rates are rejected before execution.
+`maxConcurrency: 0` retains the library zero-value behavior and runs with one execution slot. Set it explicitly for load campaigns. Values above `1,000,000`, unknown YAML fields, negative concurrency, invalid saturation policies, out-of-range spike windows, invalid URLs, and invalid threshold rates are rejected before execution.
+
+The built-in HTTP transport applies a `30s` request timeout and drains at most `1MiB` from each response body by default. YAML configuration files are limited to `1MiB`. Override HTTP limits with `transport.HTTPClientConfig` when a campaign requires different values. Treat YAML files as trusted input: targets intentionally support arbitrary HTTP and HTTPS URLs, including private network addresses.
 
 ---
 
