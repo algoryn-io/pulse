@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 - Explicit saturation policies: `drop` (default) and legacy-compatible `block`
 - Load-fidelity result fields: scheduled, started, dropped, dropped rate, completed, and maximum active requests
 - `thresholds.maxDroppedRate` and `saturationPolicy` YAML settings
+- Optional interval snapshots through `Config.Reporting.Interval` and `reporting.interval`
+- Snapshot JSON output for transient load, failure, and latency analysis
 
 ### Changed
 

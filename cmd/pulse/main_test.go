@@ -41,7 +41,8 @@ type decodedJSONResult struct {
 		Description string `json:"description"`
 		Pass        bool   `json:"pass"`
 	} `json:"thresholds"`
-	Passed bool `json:"passed"`
+	Snapshots []jsonSnapshot `json:"snapshots"`
+	Passed    bool           `json:"passed"`
 }
 
 func TestRunReturnsUsageForInvalidArgs(t *testing.T) {
@@ -281,6 +282,30 @@ func TestRunPrintsJSON(t *testing.T) {
 			ThresholdOutcomes: []pulse.ThresholdOutcome{
 				{Pass: true, Description: "error_rate < 0.5"},
 			},
+			Snapshots: []pulse.Snapshot{
+				{
+					StartedAt:   time.Date(2026, time.May, 31, 12, 0, 0, 0, time.UTC),
+					Duration:    time.Second,
+					Total:       2,
+					RPS:         2,
+					Scheduled:   3,
+					Started:     2,
+					Dropped:     1,
+					DroppedRate: 1.0 / 3.0,
+					Completed:   2,
+					MaxActive:   2,
+					Latency: pulse.LatencyStats{
+						Min:  10 * time.Millisecond,
+						Mean: 15 * time.Millisecond,
+						P50:  15 * time.Millisecond,
+						P90:  20 * time.Millisecond,
+						P95:  20 * time.Millisecond,
+						P99:  20 * time.Millisecond,
+						Max:  20 * time.Millisecond,
+					},
+					StatusCounts: map[int]int64{200: 2},
+				},
+			},
 		}, nil
 	}
 
@@ -327,6 +352,13 @@ func TestRunPrintsJSON(t *testing.T) {
 	}
 	if got.Errors["http_status_error"] != 1 {
 		t.Fatalf("expected errors map, got %+v", got.Errors)
+	}
+	if len(got.Snapshots) != 1 {
+		t.Fatalf("expected one snapshot, got %+v", got.Snapshots)
+	}
+	if got.Snapshots[0].StartedAt != "2026-05-31T12:00:00Z" ||
+		got.Snapshots[0].Summary.Scheduled != 3 || got.Snapshots[0].Summary.Dropped != 1 {
+		t.Fatalf("unexpected snapshot mapping: %+v", got.Snapshots[0])
 	}
 	if len(got.Thresholds) != 1 || got.Thresholds[0].Description != "error_rate < 0.5" || !got.Thresholds[0].Pass {
 		t.Fatalf("expected thresholds mapping, got %+v", got.Thresholds)

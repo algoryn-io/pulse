@@ -123,6 +123,15 @@ The engine reports `Scheduled`, `Started`, `Dropped`, `DroppedRate`,
 `Completed`, and `MaxActive`. These values make generator saturation
 visible independently of target-side failures.
 
+When `Config.Reporting.Interval` is greater than zero, the engine also
+records interval snapshots aligned to the run start. Arrival handling
+metrics (`Scheduled`, `Started`, and `Dropped`) belong to the interval
+where the arrival is handled. Completion metrics (`Completed`, failures,
+status codes, errors, and latency) belong to the interval where scenario
+execution finishes. This attribution makes slow requests visible in the
+window where they consume time rather than the window where they were
+scheduled.
+
 ---
 
 ## Metrics pipeline
@@ -217,6 +226,11 @@ func ToFabricRunEmit(service string, result Result, passed bool, startedAt time.
 After each run, **`Run`** records **`startedAt`** before the engine executes, evaluates thresholds, then invokes optional **`Config.OnFabricEmit(run *fabricv1.RunEvent, completed *fabricv1.Event)`** before **`OnResult`**. Use **`Config.Service`** for **`MetricSnapshot.service`** and run-completed metadata.
 
 Load-fidelity fields are exposed through `pulse.Result`, `OnResult`, and CLI JSON. They are not part of Fabric protobuf output until the shared Fabric schema defines matching fields.
+
+Interval snapshots are exposed through `pulse.Result.Snapshots`,
+`OnResult`, and CLI JSON. The text CLI output remains a global summary.
+Snapshots are not emitted in Fabric protobuf messages until the shared
+schema defines an interval representation.
 
 Conversion helpers from the **`algoryn.io/fabric`** module (**`RunEventToProto`**, **`RunCompletedPayloadToProto`**, **`MetricSnapshotToProto`**) keep field mapping consistent with the `.proto` definitions.
 

@@ -23,6 +23,28 @@ type Result struct {
 	Latency      LatencyStats
 	StatusCounts map[int]int64
 	ErrorCounts  map[string]int64
+	Snapshots    []Snapshot
+}
+
+// Snapshot contains metrics observed during one reporting interval.
+// Scheduled, started, and dropped values are attributed when the arrival is
+// handled. Completed requests and latency values are attributed when execution
+// finishes.
+type Snapshot struct {
+	StartedAt    time.Time
+	Duration     time.Duration
+	Total        int64
+	Failed       int64
+	RPS          float64
+	Scheduled    int64
+	Started      int64
+	Dropped      int64
+	DroppedRate  float64
+	Completed    int64
+	MaxActive    int64
+	Latency      LatencyStats
+	StatusCounts map[int]int64
+	ErrorCounts  map[string]int64
 }
 
 // Aggregator collects execution metrics for the MVP.
