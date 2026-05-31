@@ -11,6 +11,8 @@ target:
   timeout: 50ms
 
 maxConcurrency: 4
+saturationPolicy: drop
 
 thresholds:
+  maxDroppedRate: 0.05
   errorRate: 0.1

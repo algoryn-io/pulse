@@ -14,6 +14,12 @@ type Result struct {
 	Failed       int64
 	Duration     time.Duration
 	RPS          float64
+	Scheduled    int64
+	Started      int64
+	Dropped      int64
+	DroppedRate  float64
+	Completed    int64
+	MaxActive    int64
 	Latency      LatencyStats
 	StatusCounts map[int]int64
 	ErrorCounts  map[string]int64

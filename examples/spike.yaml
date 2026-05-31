@@ -11,7 +11,9 @@ target:
   url: http://localhost:8080
 
 maxConcurrency: 400
+saturationPolicy: drop
 
 thresholds:
+  maxDroppedRate: 0.05
   errorRate: 0.05
   maxMeanLatency: 500ms

@@ -56,3 +56,19 @@ func TestLimiterAcquireRespectsContextCancellation(t *testing.T) {
 
 	limiter.Release()
 }
+
+func TestLimiterTryAcquireReturnsImmediatelyWhenFull(t *testing.T) {
+	limiter := NewLimiter(1)
+	if !limiter.TryAcquire() {
+		t.Fatal("expected first TryAcquire to reserve a slot")
+	}
+	if limiter.TryAcquire() {
+		t.Fatal("expected second TryAcquire to report a full limiter")
+	}
+
+	limiter.Release()
+	if !limiter.TryAcquire() {
+		t.Fatal("expected TryAcquire after Release to reserve a slot")
+	}
+	limiter.Release()
+}

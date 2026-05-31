@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"sync"
 	"testing"
@@ -167,27 +166,7 @@ func TestApplyEquivalentToChain(t *testing.T) {
 }
 
 func TestRunTWithLatencyMiddleware(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	client := &http.Client{Timeout: time.Second}
-
-	baseScenario := func(ctx context.Context) (int, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
-		if err != nil {
-			return 0, err
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return 0, err
-		}
-		defer resp.Body.Close()
-
-		return resp.StatusCode, nil
-	}
+	baseScenario := newHealthyHTTPScenario(t)
 
 	test := Test{
 		Config: Config{
@@ -351,27 +330,7 @@ func TestWithStatusCodeNeverActsWhenRateIsZero(t *testing.T) {
 }
 
 func TestWithStatusCodeAndWithJitterComposeWithRunT(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	client := &http.Client{Timeout: time.Second}
-
-	baseScenario := func(ctx context.Context) (int, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
-		if err != nil {
-			return 0, err
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return 0, err
-		}
-		defer resp.Body.Close()
-
-		return resp.StatusCode, nil
-	}
+	baseScenario := newHealthyHTTPScenario(t)
 
 	test := Test{
 		Config: Config{
@@ -645,27 +604,7 @@ func TestWithBulkheadZeroUsesOne(t *testing.T) {
 }
 
 func TestWithRetryAndWithBulkheadComposeWithRunT(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	client := &http.Client{Timeout: time.Second}
-
-	baseScenario := func(ctx context.Context) (int, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
-		if err != nil {
-			return 0, err
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return 0, err
-		}
-		defer resp.Body.Close()
-
-		return resp.StatusCode, nil
-	}
+	baseScenario := newHealthyHTTPScenario(t)
 
 	test := Test{
 		Config: Config{

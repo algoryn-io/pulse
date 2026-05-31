@@ -1,11 +1,13 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -16,17 +18,28 @@ import (
 )
 
 var (
-	errNoPhases             = errors.New("config: at least one phase is required")
-	errEmptyPhaseType       = errors.New("config: phase type is required")
-	errNonPositivePhase     = errors.New("config: phase duration must be positive")
-	errNonPositiveRate      = errors.New("config: phase arrival rate must be positive")
-	errInvalidRamp          = errors.New("config: ramp phase from and to must be positive")
-	errInvalidStep          = errors.New("config: step phase requires positive from, to and steps")
-	errInvalidSpike         = errors.New("config: spike phase requires positive from, to and spikeDuration")
-	errUnsupportedPhaseType = errors.New("config: unsupported phase type")
-	errEmptyTargetMethod    = errors.New("config: target method is required")
-	errEmptyTargetURL       = errors.New("config: target url is required")
-	errUnsupportedMethod    = errors.New("config: unsupported target method")
+	errNoPhases               = errors.New("config: at least one phase is required")
+	errEmptyPhaseType         = errors.New("config: phase type is required")
+	errNonPositivePhase       = errors.New("config: phase duration must be positive")
+	errNonPositiveRate        = errors.New("config: phase arrival rate must be positive")
+	errInvalidRamp            = errors.New("config: ramp phase from and to must be positive")
+	errInvalidStep            = errors.New("config: step phase requires positive from, to and steps")
+	errInvalidSpike           = errors.New("config: spike phase requires positive from, to and spikeDuration")
+	errUnsupportedPhaseType   = errors.New("config: unsupported phase type")
+	errEmptyTargetMethod      = errors.New("config: target method is required")
+	errEmptyTargetURL         = errors.New("config: target url is required")
+	errUnsupportedMethod      = errors.New("config: unsupported target method")
+	errUnsupportedSaturation  = errors.New("config: unsupported saturation policy")
+	errNegativeMaxConcurrency = errors.New("config: maxConcurrency must not be negative")
+	errNegativeErrorRate      = errors.New("config: threshold errorRate must not be negative")
+	errErrorRateAboveOne      = errors.New("config: threshold errorRate must not be greater than 1")
+	errNegativeDroppedRate    = errors.New("config: threshold maxDroppedRate must not be negative")
+	errDroppedRateAboveOne    = errors.New("config: threshold maxDroppedRate must not be greater than 1")
+	errNegativeTargetTimeout  = errors.New("config: target timeout must not be negative")
+	errNegativeMeanLatency    = errors.New("config: threshold maxMeanLatency must not be negative")
+	errNegativeP95Latency     = errors.New("config: threshold maxP95Latency must not be negative")
+	errNegativeP99Latency     = errors.New("config: threshold maxP99Latency must not be negative")
+	errInvalidTargetURL       = errors.New("config: target url must be an absolute http or https URL")
 )
 
 type httpClient interface {
@@ -36,10 +49,11 @@ type httpClient interface {
 }
 
 type fileConfig struct {
-	Phases         []phaseConfig    `yaml:"phases"`
-	Target         targetConfig     `yaml:"target"`
-	MaxConcurrency int              `yaml:"maxConcurrency"`
-	Thresholds     thresholdsConfig `yaml:"thresholds"`
+	Phases           []phaseConfig    `yaml:"phases"`
+	Target           targetConfig     `yaml:"target"`
+	MaxConcurrency   int              `yaml:"maxConcurrency"`
+	SaturationPolicy string           `yaml:"saturationPolicy"`
+	Thresholds       thresholdsConfig `yaml:"thresholds"`
 }
 
 type phaseConfig struct {
@@ -66,6 +80,7 @@ type thresholdsConfig struct {
 	MaxMeanLatency duration `yaml:"maxMeanLatency"`
 	MaxP95Latency  duration `yaml:"maxP95Latency"`
 	MaxP99Latency  duration `yaml:"maxP99Latency"`
+	MaxDroppedRate float64  `yaml:"maxDroppedRate"`
 }
 
 type duration struct {
@@ -101,7 +116,9 @@ func Load(path string) (pulse.Test, error) {
 	}
 
 	var cfg fileConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil {
 		return pulse.Test{}, err
 	}
 
@@ -114,13 +131,15 @@ func Load(path string) (pulse.Test, error) {
 	client := newHTTPClient(cfg)
 	test := pulse.Test{
 		Config: pulse.Config{
-			Phases:         toPulsePhases(cfg.Phases),
-			MaxConcurrency: cfg.MaxConcurrency,
+			Phases:           toPulsePhases(cfg.Phases),
+			MaxConcurrency:   cfg.MaxConcurrency,
+			SaturationPolicy: pulse.SaturationPolicy(strings.ToLower(strings.TrimSpace(cfg.SaturationPolicy))),
 			Thresholds: pulse.Thresholds{
 				ErrorRate:      cfg.Thresholds.ErrorRate,
 				MaxMeanLatency: cfg.Thresholds.MaxMeanLatency.Duration,
 				MaxP95Latency:  cfg.Thresholds.MaxP95Latency.Duration,
 				MaxP99Latency:  cfg.Thresholds.MaxP99Latency.Duration,
+				MaxDroppedRate: cfg.Thresholds.MaxDroppedRate,
 			},
 		},
 		Scenario: func(ctx context.Context) (int, error) {
@@ -147,6 +166,41 @@ func validateConfig(cfg fileConfig, method string) error {
 		return errNoPhases
 	}
 
+	policy := strings.ToLower(strings.TrimSpace(cfg.SaturationPolicy))
+	if policy != "" &&
+		policy != string(pulse.SaturationPolicyDrop) &&
+		policy != string(pulse.SaturationPolicyBlock) {
+		return errUnsupportedSaturation
+	}
+
+	if cfg.MaxConcurrency < 0 {
+		return errNegativeMaxConcurrency
+	}
+	if cfg.Thresholds.ErrorRate < 0 {
+		return errNegativeErrorRate
+	}
+	if cfg.Thresholds.ErrorRate > 1 {
+		return errErrorRateAboveOne
+	}
+	if cfg.Thresholds.MaxDroppedRate < 0 {
+		return errNegativeDroppedRate
+	}
+	if cfg.Thresholds.MaxDroppedRate > 1 {
+		return errDroppedRateAboveOne
+	}
+	if cfg.Thresholds.MaxMeanLatency.Duration < 0 {
+		return errNegativeMeanLatency
+	}
+	if cfg.Thresholds.MaxP95Latency.Duration < 0 {
+		return errNegativeP95Latency
+	}
+	if cfg.Thresholds.MaxP99Latency.Duration < 0 {
+		return errNegativeP99Latency
+	}
+	if cfg.Target.Timeout.Duration < 0 {
+		return errNegativeTargetTimeout
+	}
+
 	for _, phase := range cfg.Phases {
 		if strings.TrimSpace(phase.Type) == "" {
 			return errEmptyPhaseType
@@ -171,7 +225,9 @@ func validateConfig(cfg fileConfig, method string) error {
 				return errInvalidStep
 			}
 		case string(pulse.PhaseTypeSpike):
-			if phase.From <= 0 || phase.To <= 0 || phase.SpikeDuration.Duration <= 0 {
+			if phase.From <= 0 || phase.To <= 0 || phase.SpikeAt.Duration < 0 ||
+				phase.SpikeDuration.Duration <= 0 ||
+				phase.SpikeAt.Duration+phase.SpikeDuration.Duration > phase.Duration.Duration {
 				return errInvalidSpike
 			}
 		default:
@@ -185,6 +241,11 @@ func validateConfig(cfg fileConfig, method string) error {
 
 	if strings.TrimSpace(cfg.Target.URL) == "" {
 		return errEmptyTargetURL
+	}
+	targetURL, err := url.Parse(cfg.Target.URL)
+	if err != nil || targetURL.Host == "" ||
+		(targetURL.Scheme != "http" && targetURL.Scheme != "https") {
+		return errInvalidTargetURL
 	}
 
 	switch method {

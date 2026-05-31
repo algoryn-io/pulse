@@ -116,11 +116,13 @@ func TestLoadMapsThresholds(t *testing.T) {
 		"target:\n" +
 		"  method: GET\n" +
 		"  url: https://httpbin.org/get\n" +
+		"saturationPolicy: block\n" +
 		"thresholds:\n" +
 		"  errorRate: 0.05\n" +
 		"  maxMeanLatency: 200ms\n" +
 		"  maxP95Latency: 300ms\n" +
-		"  maxP99Latency: 500ms\n"
+		"  maxP99Latency: 500ms\n" +
+		"  maxDroppedRate: 0.1\n"
 
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -145,6 +147,14 @@ func TestLoadMapsThresholds(t *testing.T) {
 
 	if test.Config.Thresholds.MaxP99Latency != 500*time.Millisecond {
 		t.Fatalf("expected p99 latency 500ms, got %v", test.Config.Thresholds.MaxP99Latency)
+	}
+
+	if test.Config.Thresholds.MaxDroppedRate != 0.1 {
+		t.Fatalf("expected max dropped rate 0.1, got %v", test.Config.Thresholds.MaxDroppedRate)
+	}
+
+	if test.Config.SaturationPolicy != pulse.SaturationPolicyBlock {
+		t.Fatalf("expected block saturation policy, got %q", test.Config.SaturationPolicy)
 	}
 }
 
@@ -576,6 +586,21 @@ func TestValidateConfigRejectsCONNECT(t *testing.T) {
 	}
 }
 
+func TestValidateConfigRejectsUnsupportedSaturationPolicy(t *testing.T) {
+	cfg := fileConfig{
+		Phases: []phaseConfig{
+			{Type: "constant", Duration: duration{Duration: time.Second}, ArrivalRate: 1},
+		},
+		Target:           targetConfig{URL: "https://pulse.test"},
+		SaturationPolicy: "queue",
+	}
+
+	err := validateConfig(cfg, http.MethodGet)
+	if !errors.Is(err, errUnsupportedSaturation) {
+		t.Fatalf("expected %v, got %v", errUnsupportedSaturation, err)
+	}
+}
+
 func TestValidateConfigRejectsInvalidSpike(t *testing.T) {
 	cfg := fileConfig{
 		Phases: []phaseConfig{
@@ -593,5 +618,118 @@ func TestValidateConfigRejectsInvalidSpike(t *testing.T) {
 	err := validateConfig(cfg, http.MethodGet)
 	if !errors.Is(err, errInvalidSpike) {
 		t.Fatalf("expected %v, got %v", errInvalidSpike, err)
+	}
+}
+
+func TestValidateConfigRejectsSpikeOutsidePhase(t *testing.T) {
+	cfg := fileConfig{
+		Phases: []phaseConfig{
+			{
+				Type:          "spike",
+				Duration:      duration{Duration: time.Second},
+				From:          10,
+				To:            20,
+				SpikeAt:       duration{Duration: 800 * time.Millisecond},
+				SpikeDuration: duration{Duration: 300 * time.Millisecond},
+			},
+		},
+		Target: targetConfig{URL: "https://pulse.test"},
+	}
+
+	err := validateConfig(cfg, http.MethodGet)
+	if !errors.Is(err, errInvalidSpike) {
+		t.Fatalf("expected %v, got %v", errInvalidSpike, err)
+	}
+}
+
+func TestValidateConfigRejectsInvalidOperationalLimits(t *testing.T) {
+	valid := fileConfig{
+		Phases: []phaseConfig{
+			{Type: "constant", Duration: duration{Duration: time.Second}, ArrivalRate: 1},
+		},
+		Target: targetConfig{URL: "https://pulse.test"},
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*fileConfig)
+		wantErr error
+	}{
+		{
+			name:    "negative max concurrency",
+			mutate:  func(cfg *fileConfig) { cfg.MaxConcurrency = -1 },
+			wantErr: errNegativeMaxConcurrency,
+		},
+		{
+			name:    "error rate above one",
+			mutate:  func(cfg *fileConfig) { cfg.Thresholds.ErrorRate = 1.1 },
+			wantErr: errErrorRateAboveOne,
+		},
+		{
+			name:    "negative dropped rate",
+			mutate:  func(cfg *fileConfig) { cfg.Thresholds.MaxDroppedRate = -0.1 },
+			wantErr: errNegativeDroppedRate,
+		},
+		{
+			name:    "negative timeout",
+			mutate:  func(cfg *fileConfig) { cfg.Target.Timeout.Duration = -time.Second },
+			wantErr: errNegativeTargetTimeout,
+		},
+		{
+			name:    "relative target URL",
+			mutate:  func(cfg *fileConfig) { cfg.Target.URL = "/api" },
+			wantErr: errInvalidTargetURL,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := valid
+			tt.mutate(&cfg)
+			err := validateConfig(cfg, http.MethodGet)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsUnknownYAMLFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	content := "" +
+		"phases:\n" +
+		"  - type: constant\n" +
+		"    duration: 1s\n" +
+		"    arrivalRate: 1\n" +
+		"target:\n" +
+		"  method: GET\n" +
+		"  url: https://pulse.test\n" +
+		"maxConcurreny: 5\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected unknown YAML field error, got nil")
+	}
+}
+
+func TestLoadAcceptsRepositoryExamples(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("..", "examples", "*.yaml"))
+	if err != nil {
+		t.Fatalf("glob examples: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("expected repository examples")
+	}
+
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			if _, err := Load(path); err != nil {
+				t.Fatalf("Load(%q): %v", path, err)
+			}
+		})
 	}
 }

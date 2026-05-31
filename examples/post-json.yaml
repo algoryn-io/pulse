@@ -15,7 +15,9 @@ target:
   timeout: 100ms
 
 maxConcurrency: 4
+saturationPolicy: drop
 
 thresholds:
+  maxDroppedRate: 0.05
   maxMeanLatency: 200ms
   maxP95Latency: 300ms
