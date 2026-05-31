@@ -132,6 +132,17 @@ execution finishes. This attribution makes slow requests visible in the
 window where they consume time rather than the window where they were
 scheduled.
 
+Enabled intervals must be at least 10 milliseconds, and a run may
+produce at most 10,000 snapshots. `MaxConcurrency` is capped at
+1,000,000. These validation limits reject configurations that could
+allocate excessive memory before useful work begins.
+
+The built-in HTTP transport uses a 30-second request timeout and drains
+at most 1 MiB from each response body by default. Both limits are
+configurable. YAML files are limited to 1 MiB. YAML targets intentionally
+allow arbitrary HTTP and HTTPS URLs, so automated systems must only
+execute trusted configuration files.
+
 ---
 
 ## Metrics pipeline

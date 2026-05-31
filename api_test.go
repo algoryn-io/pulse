@@ -266,6 +266,36 @@ func TestRunRejectsNegativeReportingInterval(t *testing.T) {
 	}
 }
 
+func TestRunRejectsReportingIntervalBelowLimit(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases:    []Phase{{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1}},
+			Reporting: ReportingConfig{Interval: time.Nanosecond},
+		},
+		Scenario: func(context.Context) (int, error) { return 0, nil },
+	}
+
+	_, err := Run(test)
+	if err != errReportIntervalTooSmall {
+		t.Fatalf("expected %v, got %v", errReportIntervalTooSmall, err)
+	}
+}
+
+func TestRunRejectsTooManySnapshots(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases:    []Phase{{Type: PhaseTypeConstant, Duration: 2 * time.Minute, ArrivalRate: 1}},
+			Reporting: ReportingConfig{Interval: 10 * time.Millisecond},
+		},
+		Scenario: func(context.Context) (int, error) { return 0, nil },
+	}
+
+	_, err := Run(test)
+	if err != errTooManySnapshots {
+		t.Fatalf("expected %v, got %v", errTooManySnapshots, err)
+	}
+}
+
 func TestRunRejectsSpikeOutsidePhase(t *testing.T) {
 	test := Test{
 		Config: Config{

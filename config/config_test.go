@@ -667,6 +667,11 @@ func TestValidateConfigRejectsInvalidOperationalLimits(t *testing.T) {
 			wantErr: errNegativeMaxConcurrency,
 		},
 		{
+			name:    "max concurrency above limit",
+			mutate:  func(cfg *fileConfig) { cfg.MaxConcurrency = maxConcurrency + 1 },
+			wantErr: errMaxConcurrencyTooHigh,
+		},
+		{
 			name:    "error rate above one",
 			mutate:  func(cfg *fileConfig) { cfg.Thresholds.ErrorRate = 1.1 },
 			wantErr: errErrorRateAboveOne,
@@ -685,6 +690,11 @@ func TestValidateConfigRejectsInvalidOperationalLimits(t *testing.T) {
 			name:    "negative reporting interval",
 			mutate:  func(cfg *fileConfig) { cfg.Reporting.Interval.Duration = -time.Second },
 			wantErr: errNegativeReportInterval,
+		},
+		{
+			name:    "reporting interval below limit",
+			mutate:  func(cfg *fileConfig) { cfg.Reporting.Interval.Duration = time.Nanosecond },
+			wantErr: errReportIntervalTooSmall,
 		},
 		{
 			name:    "relative target URL",
@@ -724,6 +734,17 @@ func TestLoadRejectsUnknownYAMLFields(t *testing.T) {
 
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected unknown YAML field error, got nil")
+	}
+}
+
+func TestLoadRejectsOversizedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oversized.yaml")
+	if err := os.WriteFile(path, make([]byte, maxConfigBytes+1), 0o644); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected oversized YAML error")
 	}
 }
 

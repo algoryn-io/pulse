@@ -171,16 +171,19 @@ func run(args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		defer file.Close()
 
-		if err := writeJSON(file, result); err != nil {
+		if err := writeJSON(file, result, runErr == nil); err != nil {
+			file.Close()
+			return err
+		}
+		if err := file.Close(); err != nil {
 			return err
 		}
 	}
 
 	if showResults {
 		if options.jsonOutput {
-			if err := writeJSON(stdout, result); err != nil {
+			if err := writeJSON(stdout, result, runErr == nil); err != nil {
 				return err
 			}
 		} else {
@@ -328,14 +331,14 @@ func writeText(w io.Writer, result pulse.Result) {
 	}
 }
 
-func writeJSON(w io.Writer, result pulse.Result) error {
+func writeJSON(w io.Writer, result pulse.Result, passed bool) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	encoder.SetEscapeHTML(false)
-	return encoder.Encode(toJSONResult(result))
+	return encoder.Encode(toJSONResult(result, passed))
 }
 
-func toJSONResult(result pulse.Result) jsonResult {
+func toJSONResult(result pulse.Result, passed bool) jsonResult {
 	return jsonResult{
 		Summary: jsonSummary{
 			Total:       result.Total,
@@ -362,7 +365,7 @@ func toJSONResult(result pulse.Result) jsonResult {
 		Errors:      cloneStringCountMap(result.ErrorCounts),
 		Thresholds:  toJSONThresholds(result.ThresholdOutcomes),
 		Snapshots:   toJSONSnapshots(result.Snapshots),
-		Passed:      passedThresholds(result.ThresholdOutcomes),
+		Passed:      passed,
 	}
 }
 
@@ -447,13 +450,4 @@ func toJSONThresholds(outcomes []pulse.ThresholdOutcome) []jsonThreshold {
 		}
 	}
 	return out
-}
-
-func passedThresholds(outcomes []pulse.ThresholdOutcome) bool {
-	for _, outcome := range outcomes {
-		if !outcome.Pass {
-			return false
-		}
-	}
-	return true
 }

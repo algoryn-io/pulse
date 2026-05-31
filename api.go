@@ -36,6 +36,15 @@ var (
 	errDroppedRateAboveOne    = errors.New("pulse: threshold dropped rate must not be greater than 1")
 	errNegativeMaxConcurrency = errors.New("pulse: max concurrency must not be negative")
 	errNegativeReportInterval = errors.New("pulse: reporting interval must not be negative")
+	errReportIntervalTooSmall = errors.New("pulse: reporting interval must be at least 10ms when enabled")
+	errTooManySnapshots       = errors.New("pulse: reporting interval would generate too many snapshots")
+	errMaxConcurrencyTooHigh  = errors.New("pulse: max concurrency must not exceed 1000000")
+)
+
+const (
+	minReportingInterval = 10 * time.Millisecond
+	maxSnapshots         = 10_000
+	maxConcurrency       = 1_000_000
 )
 
 // SaturationPolicy controls what happens when all execution slots are in use.
@@ -289,14 +298,29 @@ func validateTest(test Test) error {
 	if test.Config.MaxConcurrency < 0 {
 		return errNegativeMaxConcurrency
 	}
+	if test.Config.MaxConcurrency > maxConcurrency {
+		return errMaxConcurrencyTooHigh
+	}
 
 	if test.Config.Reporting.Interval < 0 {
 		return errNegativeReportInterval
 	}
+	if test.Config.Reporting.Interval > 0 && test.Config.Reporting.Interval < minReportingInterval {
+		return errReportIntervalTooSmall
+	}
 
+	var totalDuration time.Duration
 	for _, phase := range test.Config.Phases {
 		if phase.Duration <= 0 {
 			return errNonPositivePhase
+		}
+		if totalDuration > time.Duration(1<<63-1)-phase.Duration {
+			return errTooManySnapshots
+		}
+		totalDuration += phase.Duration
+		if test.Config.Reporting.Interval > 0 &&
+			(totalDuration-1)/test.Config.Reporting.Interval+1 > maxSnapshots {
+			return errTooManySnapshots
 		}
 
 		pt := PhaseType(strings.TrimSpace(string(phase.Type)))
@@ -327,7 +351,6 @@ func validateTest(test Test) error {
 			return errUnsupportedPhaseType
 		}
 	}
-
 	if test.Config.Thresholds.ErrorRate < 0 {
 		return errNegativeErrorRate
 	}

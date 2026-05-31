@@ -1,6 +1,8 @@
 package pulse
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -20,14 +22,20 @@ type FabricRunEmit struct {
 	RunCompleted *fabricv1.Event
 }
 
-// newRunID returns a simple unique identifier for a Pulse run.
-// It avoids external dependencies by using the nanosecond clock.
 func newRunID() string {
-	return fmt.Sprintf("pulse-%d", time.Now().UnixNano())
+	return newID("pulse")
 }
 
 func newFabricEventID() string {
-	return fmt.Sprintf("pulse-event-%d", time.Now().UnixNano())
+	return newID("pulse-event")
+}
+
+func newID(prefix string) string {
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err == nil {
+		return prefix + "-" + hex.EncodeToString(random[:])
+	}
+	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
 
 // ToRunEvent converts a Pulse Result into a fabric metrics.RunEvent,

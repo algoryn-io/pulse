@@ -3,6 +3,7 @@ package pulse
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"time"
 )
@@ -105,6 +106,15 @@ func (cb *circuitBreaker) record(success bool, now time.Time) {
 // by opening a circuit when the error rate within a time window exceeds
 // the threshold.
 func WithCircuitBreaker(threshold float64, window, timeout time.Duration) Middleware {
+	if math.IsNaN(threshold) || threshold < 0 || threshold > 1 {
+		panic("pulse: circuit breaker threshold must be between 0 and 1")
+	}
+	if window <= 0 {
+		panic("pulse: circuit breaker window must be positive")
+	}
+	if timeout <= 0 {
+		panic("pulse: circuit breaker timeout must be positive")
+	}
 	cb := newCircuitBreaker(threshold, window, timeout)
 
 	return func(next Scenario) Scenario {
