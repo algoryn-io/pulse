@@ -67,6 +67,7 @@ type jsonSnapshot struct {
 }
 
 type jsonResult struct {
+	SchemaVersion int             `json:"schema_version"`
 	Summary     jsonSummary      `json:"summary"`
 	Latency     jsonLatency      `json:"latency"`
 	StatusCodes map[string]int64 `json:"status_codes"`
@@ -340,6 +341,7 @@ func writeJSON(w io.Writer, result pulse.Result, passed bool) error {
 
 func toJSONResult(result pulse.Result, passed bool) jsonResult {
 	return jsonResult{
+		SchemaVersion: 1,
 		Summary: jsonSummary{
 			Total:       result.Total,
 			Failed:      result.Failed,
