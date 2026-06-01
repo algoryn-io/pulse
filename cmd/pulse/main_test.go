@@ -14,6 +14,7 @@ import (
 )
 
 type decodedJSONResult struct {
+	SchemaVersion int `json:"schema_version"`
 	Summary struct {
 		Total       int64   `json:"total"`
 		Failed      int64   `json:"failed"`
@@ -318,6 +319,9 @@ func TestRunPrintsJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("expected valid json, got %v", err)
 	}
+	if got.SchemaVersion != 1 {
+		t.Fatalf("schema_version = %d, want 1", got.SchemaVersion)
+	}
 	if strings.Contains(stdout.String(), textBanner) {
 		t.Fatalf("expected no banner in JSON output, got %q", stdout.String())
 	}
@@ -410,6 +414,9 @@ func TestRunWritesJSONToFile(t *testing.T) {
 	var got decodedJSONResult
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("expected valid json file, got %v", err)
+	}
+	if got.SchemaVersion != 1 {
+		t.Fatalf("schema_version = %d, want 1", got.SchemaVersion)
 	}
 
 	if got.Summary.Total != 8 || got.Summary.Failed != 2 {
