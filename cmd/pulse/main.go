@@ -16,7 +16,7 @@ import (
 	"algoryn.io/pulse/transport"
 )
 
-const usageMessage = "usage: pulse run [config.yaml] [--json] [--out <file>]\n\nRuns a sample load test or a YAML-defined test"
+const usageMessage = "usage: pulse run [config.yaml] [--json] [--out <file>] [--junit <file>]\n\nRuns a sample load test or a YAML-defined test"
 const textBanner = "⚡ Pulse — programmable load testing"
 const textStatusPassed = "✔ Test passed"
 const textStatusThresholdFailed = "❌ Thresholds failed"
@@ -28,6 +28,7 @@ type runOptions struct {
 	configPath string
 	jsonOutput bool
 	outFile    string
+	junitFile  string
 }
 
 type jsonSummary struct {
@@ -182,6 +183,20 @@ func run(args []string, stdout io.Writer) error {
 		}
 	}
 
+	if options.junitFile != "" {
+		file, err := os.Create(options.junitFile)
+		if err != nil {
+			return err
+		}
+		if err := writeJUnit(file, result, runErr); err != nil {
+			file.Close()
+			return err
+		}
+		if err := file.Close(); err != nil {
+			return err
+		}
+	}
+
 	if showResults {
 		if options.jsonOutput {
 			if err := writeJSON(stdout, result, runErr == nil); err != nil {
@@ -256,6 +271,12 @@ func parseRunArgs(args []string) (runOptions, error) {
 			}
 
 			options.outFile = args[i+1]
+			i++
+		case "--junit":
+			if i+1 >= len(args) {
+				return runOptions{}, errUsage
+			}
+			options.junitFile = args[i+1]
 			i++
 		default:
 			if len(args[i]) > 2 && args[i][:2] == "--" {

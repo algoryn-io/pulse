@@ -457,6 +457,90 @@ func TestRunWritesJSONToFile(t *testing.T) {
 	}
 }
 
+func TestRunWritesJUnitForThresholdFailure(t *testing.T) {
+	previousExecute := execute
+	t.Cleanup(func() {
+		execute = previousExecute
+	})
+
+	threshErr := &pulse.ThresholdViolationError{
+		Description: "p95_latency < 200ms",
+		Actual:      250 * time.Millisecond,
+		Limit:       200 * time.Millisecond,
+	}
+	execute = func([]string) (pulse.Result, error) {
+		return pulse.Result{
+			Duration: 2 * time.Second,
+			ThresholdOutcomes: []pulse.ThresholdOutcome{
+				{Pass: false, Description: "p95_latency < 200ms"},
+			},
+		}, threshErr
+	}
+
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "result.xml")
+
+	var stdout bytes.Buffer
+	err := run([]string{"run", "--junit", outPath}, &stdout)
+	if !errors.As(err, new(*pulse.ThresholdViolationError)) {
+		t.Fatalf("expected threshold error, got %v", err)
+	}
+	if exitCode(err) != 2 {
+		t.Fatalf("exitCode(threshold) = %d, want 2", exitCode(err))
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read junit: %v", err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "<testsuite") || !strings.Contains(s, "failures=\"1\"") {
+		t.Fatalf("unexpected junit output: %s", s)
+	}
+	if !strings.Contains(s, "<testcase") || !strings.Contains(s, "p95_latency &lt; 200ms") {
+		t.Fatalf("expected threshold testcase in junit output: %s", s)
+	}
+	if !strings.Contains(s, "<failure") {
+		t.Fatalf("expected failure element: %s", s)
+	}
+}
+
+func TestRunWritesJUnitForExecutionError(t *testing.T) {
+	previousExecute := execute
+	t.Cleanup(func() {
+		execute = previousExecute
+	})
+
+	wantErr := errors.New("boom")
+	execute = func([]string) (pulse.Result, error) {
+		return pulse.Result{Duration: time.Second}, wantErr
+	}
+
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "result.xml")
+
+	var stdout bytes.Buffer
+	err := run([]string{"run", "--junit", outPath}, &stdout)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected %v, got %v", wantErr, err)
+	}
+	if exitCode(err) != 1 {
+		t.Fatalf("exitCode(exec err) = %d, want 1", exitCode(err))
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read junit: %v", err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "<testsuite") || !strings.Contains(s, "errors=\"1\"") {
+		t.Fatalf("unexpected junit output: %s", s)
+	}
+	if !strings.Contains(s, "<error") || !strings.Contains(s, "boom") {
+		t.Fatalf("expected error element: %s", s)
+	}
+}
+
 func TestRunWritesPassedFalseToFileOnRuntimeFailure(t *testing.T) {
 	previousExecute := execute
 	t.Cleanup(func() { execute = previousExecute })

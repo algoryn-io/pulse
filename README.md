@@ -96,6 +96,7 @@ pulse run path/to/config.yaml
 |------|-------------|
 | `--json` | Print results as **JSON** on stdout. |
 | `--out <file>` | Write the same JSON object to a file (can be combined with `--json`). |
+| `--junit <file>` | Write a **JUnit XML** report for CI (thresholds become individual test cases). |
 
 **Exit codes** — `0` success; `2` run finished but **thresholds failed**; `1` for usage, config, I/O, or other failures (including mixed error types).
 
