@@ -15,7 +15,7 @@ import (
 
 type decodedJSONResult struct {
 	SchemaVersion int `json:"schema_version"`
-	Summary struct {
+	Summary       struct {
 		Total       int64   `json:"total"`
 		Failed      int64   `json:"failed"`
 		RPS         float64 `json:"rps"`
@@ -98,7 +98,8 @@ func TestRunPrintsResults(t *testing.T) {
 	}
 
 	want := "" +
-		"⚡ Pulse — programmable load testing\n" +
+		"Pulse\n" +
+		"Programmable load testing\n" +
 		"\n" +
 		"Total requests: 15\n" +
 		"Failed requests: 2\n" +
@@ -166,7 +167,7 @@ func TestRunReturnsThresholdEvaluationError(t *testing.T) {
 	if !strings.Contains(stdout.String(), "FAIL mean_latency") {
 		t.Fatalf("expected threshold FAIL in stdout, got %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), textBanner+"\n\n") {
+	if !strings.Contains(stdout.String(), textBanner+"\n"+textBannerSubtitle+"\n\n") {
 		t.Fatalf("expected banner in stdout, got %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Thresholds failed. See results above.\n") {
@@ -322,7 +323,7 @@ func TestRunPrintsJSON(t *testing.T) {
 	if got.SchemaVersion != 1 {
 		t.Fatalf("schema_version = %d, want 1", got.SchemaVersion)
 	}
-	if strings.Contains(stdout.String(), textBanner) {
+	if strings.Contains(stdout.String(), textBanner+"\n"+textBannerSubtitle) {
 		t.Fatalf("expected no banner in JSON output, got %q", stdout.String())
 	}
 	if strings.Contains(stdout.String(), textStatusPassed) || strings.Contains(stdout.String(), textStatusThresholdFailed) {
@@ -369,6 +370,73 @@ func TestRunPrintsJSON(t *testing.T) {
 	}
 	if !got.Passed {
 		t.Fatalf("expected passed=true, got %+v", got)
+	}
+}
+
+func TestRunPrintsJSONWithFormatFlag(t *testing.T) {
+	previousExecute := execute
+	t.Cleanup(func() {
+		execute = previousExecute
+	})
+
+	execute = func([]string) (pulse.Result, error) {
+		return pulse.Result{Total: 1, Duration: time.Second}, nil
+	}
+
+	var stdout bytes.Buffer
+	if err := run([]string{"run", "--format", "json"}, &stdout); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"schema_version": 1`) {
+		t.Fatalf("expected json output, got %q", stdout.String())
+	}
+}
+
+func TestRunPrintsQuietTextSummary(t *testing.T) {
+	previousExecute := execute
+	t.Cleanup(func() {
+		execute = previousExecute
+	})
+
+	execute = func([]string) (pulse.Result, error) {
+		return pulse.Result{
+			Total:    15,
+			Failed:   2,
+			Duration: 3 * time.Second,
+			RPS:      5,
+			Latency: pulse.LatencyStats{
+				Min:  10 * time.Millisecond,
+				Max:  40 * time.Millisecond,
+				Mean: 25 * time.Millisecond,
+				P50:  20 * time.Millisecond,
+				P90:  32 * time.Millisecond,
+				P95:  35 * time.Millisecond,
+				P99:  38 * time.Millisecond,
+			},
+		}, nil
+	}
+
+	var stdout bytes.Buffer
+	if err := run([]string{"run", "--quiet"}, &stdout); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	want := "" +
+		"Total requests: 15\n" +
+		"Failed requests: 2\n" +
+		"Duration: 3s\n" +
+		"RPS: 5.00\n" +
+		"✔ Test passed\n"
+
+	if stdout.String() != want {
+		t.Fatalf("expected quiet output %q, got %q", want, stdout.String())
+	}
+}
+
+func TestRunRejectsQuietJSONCombination(t *testing.T) {
+	var stdout bytes.Buffer
+	if err := run([]string{"run", "--quiet", "--format", "json"}, &stdout); err == nil {
+		t.Fatal("expected error, got nil")
 	}
 }
 
@@ -430,7 +498,8 @@ func TestRunWritesJSONToFile(t *testing.T) {
 	}
 
 	wantStdout := "" +
-		"⚡ Pulse — programmable load testing\n" +
+		"Pulse\n" +
+		"Programmable load testing\n" +
 		"\n" +
 		"Total requests: 8\n" +
 		"Failed requests: 2\n" +
@@ -597,7 +666,7 @@ func TestRunCLISuppressesThresholdOnlyErrorOnStderr(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("expected empty stderr, got %q", stderr.String())
 	}
-	if !strings.Contains(stdout.String(), textBanner+"\n\n") {
+	if !strings.Contains(stdout.String(), textBanner+"\n"+textBannerSubtitle+"\n\n") {
 		t.Fatalf("expected banner in stdout, got %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Thresholds failed. See results above.") {
