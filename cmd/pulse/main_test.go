@@ -440,6 +440,16 @@ func TestRunRejectsQuietJSONCombination(t *testing.T) {
 	}
 }
 
+func TestParseRunArgsParsesSeed(t *testing.T) {
+	got, err := parseRunArgs([]string{"run", "--seed", "123"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got.seed == nil || *got.seed != 123 {
+		t.Fatalf("expected seed 123, got %+v", got.seed)
+	}
+}
+
 func TestRunWritesJSONToFile(t *testing.T) {
 	previousExecute := execute
 	t.Cleanup(func() {

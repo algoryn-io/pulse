@@ -62,6 +62,7 @@ type fileConfig struct {
 	SaturationPolicy string           `yaml:"saturationPolicy"`
 	Thresholds       thresholdsConfig `yaml:"thresholds"`
 	Reporting        reportingConfig  `yaml:"reporting"`
+	Seed             *int64           `yaml:"seed"`
 }
 
 type phaseConfig struct {
@@ -165,6 +166,7 @@ func Load(path string) (pulse.Test, error) {
 			Reporting: pulse.ReportingConfig{
 				Interval: cfg.Reporting.Interval.Duration,
 			},
+			Seed: cfg.Seed,
 		},
 		Scenario: func(ctx context.Context) (int, error) {
 			switch method {

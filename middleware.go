@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"math"
-	"math/rand"
 	"time"
 )
 
@@ -42,7 +41,7 @@ func WithLatency(d time.Duration, rate float64) Middleware {
 	validateRate(rate)
 	return func(next Scenario) Scenario {
 		return func(ctx context.Context) (int, error) {
-			if rand.Float64() < rate {
+			if randomFloat64() < rate {
 				timer := time.NewTimer(d)
 				defer timer.Stop()
 
@@ -64,7 +63,7 @@ func WithErrorRate(rate float64) Middleware {
 	validateRate(rate)
 	return func(next Scenario) Scenario {
 		return func(ctx context.Context) (int, error) {
-			if rand.Float64() < rate {
+			if randomFloat64() < rate {
 				return 0, ErrInjected
 			}
 
@@ -84,10 +83,10 @@ func WithJitter(min, max time.Duration, rate float64) Middleware {
 	}
 	return func(next Scenario) Scenario {
 		return func(ctx context.Context) (int, error) {
-			if rand.Float64() < rate {
+			if randomFloat64() < rate {
 				d := min
 				if max > min {
-					d = min + time.Duration(rand.Int63n(int64(max-min)))
+					d = min + time.Duration(randomInt63n(int64(max-min)))
 				}
 
 				timer := time.NewTimer(d)
@@ -126,7 +125,7 @@ func WithStatusCode(code int, rate float64) Middleware {
 	validateRate(rate)
 	return func(next Scenario) Scenario {
 		return func(ctx context.Context) (int, error) {
-			if rand.Float64() < rate {
+			if randomFloat64() < rate {
 				return code, ErrInjected
 			}
 			return next(ctx)
