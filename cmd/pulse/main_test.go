@@ -497,7 +497,7 @@ func TestRunWritesJUnitForThresholdFailure(t *testing.T) {
 	if !strings.Contains(s, "<testsuite") || !strings.Contains(s, "failures=\"1\"") {
 		t.Fatalf("unexpected junit output: %s", s)
 	}
-	if !strings.Contains(s, "<testcase") || !strings.Contains(s, "p95_latency < 200ms") {
+	if !strings.Contains(s, "<testcase") || !strings.Contains(s, "p95_latency &lt; 200ms") {
 		t.Fatalf("expected threshold testcase in junit output: %s", s)
 	}
 	if !strings.Contains(s, "<failure") {

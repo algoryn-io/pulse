@@ -134,11 +134,11 @@ func thresholdActualLimit(result pulse.Result, description string, runErr error)
 		if tv.Description != description {
 			continue
 		}
-		if tv.Actual != 0 {
-			actual = tv.Actual.String()
+		if tv.Actual != nil {
+			actual = fmt.Sprintf("%v", tv.Actual)
 		}
-		if tv.Limit != 0 {
-			limit = tv.Limit.String()
+		if tv.Limit != nil {
+			limit = fmt.Sprintf("%v", tv.Limit)
 		}
 		return actual, limit
 	}
