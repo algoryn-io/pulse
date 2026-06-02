@@ -16,8 +16,9 @@ import (
 	"algoryn.io/pulse/transport"
 )
 
-const usageMessage = "usage: pulse run [config.yaml] [--json] [--out <file>] [--junit <file>]\n\nRuns a sample load test or a YAML-defined test"
-const textBanner = "⚡ Pulse — programmable load testing"
+const usageMessage = "usage: pulse run [config.yaml] [--format text|json] [--quiet] [--out <file>] [--junit <file>]\n\nRuns a sample load test or a YAML-defined test"
+const textBanner = "Pulse"
+const textBannerSubtitle = "Programmable load testing"
 const textStatusPassed = "✔ Test passed"
 const textStatusThresholdFailed = "❌ Thresholds failed"
 
@@ -26,7 +27,8 @@ var execute = runTest
 
 type runOptions struct {
 	configPath string
-	jsonOutput bool
+	format     string
+	quiet      bool
 	outFile    string
 	junitFile  string
 }
@@ -68,14 +70,14 @@ type jsonSnapshot struct {
 }
 
 type jsonResult struct {
-	SchemaVersion int             `json:"schema_version"`
-	Summary     jsonSummary      `json:"summary"`
-	Latency     jsonLatency      `json:"latency"`
-	StatusCodes map[string]int64 `json:"status_codes"`
-	Errors      map[string]int64 `json:"errors"`
-	Thresholds  []jsonThreshold  `json:"thresholds"`
-	Snapshots   []jsonSnapshot   `json:"snapshots"`
-	Passed      bool             `json:"passed"`
+	SchemaVersion int              `json:"schema_version"`
+	Summary       jsonSummary      `json:"summary"`
+	Latency       jsonLatency      `json:"latency"`
+	StatusCodes   map[string]int64 `json:"status_codes"`
+	Errors        map[string]int64 `json:"errors"`
+	Thresholds    []jsonThreshold  `json:"thresholds"`
+	Snapshots     []jsonSnapshot   `json:"snapshots"`
+	Passed        bool             `json:"passed"`
 }
 
 func main() {
@@ -165,7 +167,10 @@ func run(args []string, stdout io.Writer) error {
 		executeArgs = append(executeArgs, options.configPath)
 	}
 
+	progress := newProgressReporter(stdout, options.format)
+	progress.start()
 	result, runErr := execute(executeArgs)
+	progress.stop()
 	showResults := runErr == nil || isThresholdEvaluationFailureOnly(runErr)
 
 	if options.outFile != "" {
@@ -198,22 +203,12 @@ func run(args []string, stdout io.Writer) error {
 	}
 
 	if showResults {
-		if options.jsonOutput {
+		if options.format == "json" {
 			if err := writeJSON(stdout, result, runErr == nil); err != nil {
 				return err
 			}
 		} else {
-			writeBanner(stdout)
-			writeText(stdout, result)
-			if isThresholdEvaluationFailureOnly(runErr) {
-				fmt.Fprintln(stdout)
-				fmt.Fprintln(stdout, "Thresholds failed. See results above.")
-				fmt.Fprintln(stdout)
-				fmt.Fprintln(stdout, textStatusThresholdFailed)
-			} else {
-				fmt.Fprintln(stdout)
-				fmt.Fprintln(stdout, textStatusPassed)
-			}
+			writeTextOutput(stdout, result, options.quiet, isThresholdEvaluationFailureOnly(runErr))
 		}
 	}
 
@@ -222,6 +217,7 @@ func run(args []string, stdout io.Writer) error {
 
 func writeBanner(w io.Writer) {
 	fmt.Fprintln(w, textBanner)
+	fmt.Fprintln(w, textBannerSubtitle)
 	fmt.Fprintln(w)
 }
 
@@ -260,11 +256,33 @@ func parseRunArgs(args []string) (runOptions, error) {
 		return runOptions{}, errUsage
 	}
 
-	var options runOptions
+	options := runOptions{format: "text"}
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
 		case "--json":
-			options.jsonOutput = true
+			if options.format != "text" {
+				return runOptions{}, errUsage
+			}
+			options.format = "json"
+		case "--format":
+			if i+1 >= len(args) {
+				return runOptions{}, errUsage
+			}
+			if options.format != "text" && options.format != args[i+1] {
+				return runOptions{}, errUsage
+			}
+			switch args[i+1] {
+			case "text", "json":
+				options.format = args[i+1]
+			default:
+				return runOptions{}, errUsage
+			}
+			i++
+		case "--quiet":
+			options.quiet = true
+			if options.format == "json" {
+				return runOptions{}, errUsage
+			}
 		case "--out":
 			if i+1 >= len(args) {
 				return runOptions{}, errUsage
@@ -290,14 +308,44 @@ func parseRunArgs(args []string) (runOptions, error) {
 		}
 	}
 
+	if options.quiet && options.format == "json" {
+		return runOptions{}, errUsage
+	}
 	return options, nil
 }
 
-func writeText(w io.Writer, result pulse.Result) {
+func writeTextOutput(w io.Writer, result pulse.Result, quiet bool, thresholdFailed bool) {
+	if !quiet {
+		writeBanner(w)
+	}
+	writeText(w, result, quiet)
+	if quiet {
+		if thresholdFailed {
+			fmt.Fprintln(w, textStatusThresholdFailed)
+		} else {
+			fmt.Fprintln(w, textStatusPassed)
+		}
+		return
+	}
+	if thresholdFailed {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Thresholds failed. See results above.")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, textStatusThresholdFailed)
+	} else {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, textStatusPassed)
+	}
+}
+
+func writeText(w io.Writer, result pulse.Result, quiet bool) {
 	fmt.Fprintf(w, "Total requests: %d\n", result.Total)
 	fmt.Fprintf(w, "Failed requests: %d\n", result.Failed)
 	fmt.Fprintf(w, "Duration: %v\n", result.Duration)
 	fmt.Fprintf(w, "RPS: %.2f\n", result.RPS)
+	if quiet {
+		return
+	}
 	if result.Scheduled > 0 {
 		fmt.Fprintf(w, "Scheduled arrivals: %d\n", result.Scheduled)
 		fmt.Fprintf(w, "Started requests: %d\n", result.Started)
@@ -351,6 +399,40 @@ func writeText(w io.Writer, result pulse.Result) {
 			}
 		}
 	}
+}
+
+type progressReporter struct {
+	w   io.Writer
+	tty bool
+}
+
+func newProgressReporter(stdout io.Writer, format string) progressReporter {
+	if format == "json" {
+		return progressReporter{}
+	}
+	f, ok := stdout.(*os.File)
+	if !ok {
+		return progressReporter{}
+	}
+	stat, err := f.Stat()
+	if err != nil || stat.Mode()&os.ModeCharDevice == 0 {
+		return progressReporter{}
+	}
+	return progressReporter{w: os.Stderr, tty: true}
+}
+
+func (p progressReporter) start() {
+	if !p.tty {
+		return
+	}
+	fmt.Fprintln(p.w, "Running...")
+}
+
+func (p progressReporter) stop() {
+	if !p.tty {
+		return
+	}
+	fmt.Fprintln(p.w, "Done.")
 }
 
 func writeJSON(w io.Writer, result pulse.Result, passed bool) error {
