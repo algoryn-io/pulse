@@ -118,6 +118,29 @@ func TestWithErrorRateNeverFailsWhenRateIsZero(t *testing.T) {
 	}
 }
 
+func TestSeedMakesRandomMiddlewaresDeterministic(t *testing.T) {
+	buildSequence := func() []bool {
+		SetSeed(123)
+		scenario := Apply(func(context.Context) (int, error) {
+			return http.StatusOK, nil
+		}, WithErrorRate(0.5), WithJitter(time.Millisecond, 3*time.Millisecond, 0.5))
+
+		out := make([]bool, 0, 8)
+		for range 8 {
+			_, err := scenario(context.Background())
+			out = append(out, errors.Is(err, ErrInjected))
+		}
+		return out
+	}
+
+	got1 := buildSequence()
+	got2 := buildSequence()
+
+	if !reflect.DeepEqual(got1, got2) {
+		t.Fatalf("expected deterministic sequence, got %v and %v", got1, got2)
+	}
+}
+
 func TestChainAppliesMiddlewaresInOrder(t *testing.T) {
 	var (
 		mu    sync.Mutex

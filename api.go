@@ -132,6 +132,7 @@ type ReportingConfig struct {
 type Config struct {
 	Phases         []Phase
 	MaxConcurrency int
+	Seed           *int64
 	// SaturationPolicy defaults to SaturationPolicyDrop.
 	SaturationPolicy SaturationPolicy
 	Thresholds       Thresholds
@@ -222,6 +223,9 @@ func Run(test Test) (Result, error) {
 func RunContext(ctx context.Context, test Test) (Result, error) {
 	if err := validateTest(test); err != nil {
 		return Result{}, err
+	}
+	if test.Config.Seed != nil && !hasSeed() {
+		SetSeed(*test.Config.Seed)
 	}
 
 	execution := engine.NewWithOptions(

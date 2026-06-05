@@ -16,7 +16,7 @@ import (
 	"algoryn.io/pulse/transport"
 )
 
-const usageMessage = "usage: pulse run [config.yaml] [--format text|json] [--quiet] [--out <file>] [--junit <file>]\n\nRuns a sample load test or a YAML-defined test"
+const usageMessage = "usage: pulse run [config.yaml] [--format text|json] [--quiet] [--seed <n>] [--out <file>] [--junit <file>]\n\nRuns a sample load test or a YAML-defined test"
 const textBanner = "Pulse"
 const textBannerSubtitle = "Programmable load testing"
 const textStatusPassed = "✔ Test passed"
@@ -29,6 +29,7 @@ type runOptions struct {
 	configPath string
 	format     string
 	quiet      bool
+	seed       *int64
 	outFile    string
 	junitFile  string
 }
@@ -161,6 +162,9 @@ func run(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if options.seed != nil {
+		pulse.SetSeed(*options.seed)
+	}
 
 	executeArgs := []string{}
 	if options.configPath != "" {
@@ -283,6 +287,16 @@ func parseRunArgs(args []string) (runOptions, error) {
 			if options.format == "json" {
 				return runOptions{}, errUsage
 			}
+		case "--seed":
+			if i+1 >= len(args) {
+				return runOptions{}, errUsage
+			}
+			seed, err := strconv.ParseInt(args[i+1], 10, 64)
+			if err != nil {
+				return runOptions{}, errUsage
+			}
+			options.seed = &seed
+			i++
 		case "--out":
 			if i+1 >= len(args) {
 				return runOptions{}, errUsage

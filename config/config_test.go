@@ -82,6 +82,9 @@ func TestLoadMapsYAMLToPulseTest(t *testing.T) {
 	if test.Config.MaxConcurrency != 5 {
 		t.Fatalf("expected max concurrency 5, got %d", test.Config.MaxConcurrency)
 	}
+	if test.Config.Seed != nil {
+		t.Fatalf("expected nil seed, got %v", *test.Config.Seed)
+	}
 
 	if test.Config.Thresholds.ErrorRate != 0 {
 		t.Fatalf("expected zero error rate threshold, got %v", test.Config.Thresholds.ErrorRate)
@@ -116,6 +119,7 @@ func TestLoadMapsThresholds(t *testing.T) {
 		"target:\n" +
 		"  method: GET\n" +
 		"  url: https://httpbin.org/get\n" +
+		"seed: 42\n" +
 		"saturationPolicy: block\n" +
 		"reporting:\n" +
 		"  interval: 1s\n" +
@@ -161,6 +165,9 @@ func TestLoadMapsThresholds(t *testing.T) {
 
 	if test.Config.Reporting.Interval != time.Second {
 		t.Fatalf("expected reporting interval 1s, got %v", test.Config.Reporting.Interval)
+	}
+	if test.Config.Seed == nil || *test.Config.Seed != 42 {
+		t.Fatalf("expected seed 42, got %v", test.Config.Seed)
 	}
 }
 
