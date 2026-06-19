@@ -112,8 +112,10 @@ func (p *Policy) Check(rawURL string) error {
 	if ip == nil {
 		addrs, err := net.LookupHost(host)
 		if err != nil || len(addrs) == 0 {
-			// Cannot resolve → block conservatively.
-			return fmt.Errorf("%w: cannot resolve host %q", ErrBlocked, host)
+			// Cannot resolve → block conservatively, but do not wrap ErrBlocked
+			// so callers can distinguish a DNS failure from an explicit policy
+			// rejection (errors.Is(err, ErrBlocked) returns false here).
+			return fmt.Errorf("ssrf: cannot resolve host %q: %w", host, err)
 		}
 		ip = net.ParseIP(addrs[0])
 	}

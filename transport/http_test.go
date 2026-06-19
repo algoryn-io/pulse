@@ -348,8 +348,10 @@ func TestHTTPClientWithCustomTransportTakesPrecedenceOverPoolConfig(t *testing.T
 		MaxIdleConns:        99,
 		MaxIdleConnsPerHost: 9,
 	})
-	if client.client.Transport != http.RoundTripper(custom) {
-		t.Fatalf("expected custom Transport, got %T", client.client.Transport)
+	// roundTripperFunc is a function type and cannot be compared with !=.
+	// Use a type assertion to verify the transport is the custom one.
+	if _, ok := client.client.Transport.(roundTripperFunc); !ok {
+		t.Fatalf("expected custom Transport (roundTripperFunc), got %T", client.client.Transport)
 	}
 }
 
