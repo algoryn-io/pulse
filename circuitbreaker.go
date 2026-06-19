@@ -23,16 +23,17 @@ const (
 
 // circuitBreaker holds the state for a single WithCircuitBreaker instance.
 type circuitBreaker struct {
-	mu          sync.Mutex
-	state       cbState
-	failures    int
-	successes   int
-	total       int
-	windowStart time.Time
-	openedAt    time.Time
-	threshold   float64
-	window      time.Duration
-	timeout     time.Duration
+	mu            sync.Mutex
+	state         cbState
+	failures      int
+	successes     int
+	total         int
+	windowStart   time.Time
+	openedAt      time.Time
+	threshold     float64
+	window        time.Duration
+	timeout       time.Duration
+	probeInFlight bool // true while exactly one probe request is executing in half-open state
 }
 
 func newCircuitBreaker(threshold float64, window, timeout time.Duration) *circuitBreaker {
@@ -47,17 +48,28 @@ func newCircuitBreaker(threshold float64, window, timeout time.Duration) *circui
 
 // allow reports whether the request should proceed.
 // Must be called with cb.mu held.
+//
+// In half-open state only one probe request is permitted at a time; concurrent
+// callers receive false until the probe completes and record() transitions the
+// circuit to closed or back to open.
 func (cb *circuitBreaker) allow(now time.Time) bool {
 	switch cb.state {
 	case cbOpen:
 		if now.Sub(cb.openedAt) >= cb.timeout {
 			cb.state = cbHalfOpen
+			cb.probeInFlight = true
 			return true
 		}
 		return false
 	case cbHalfOpen:
+		// Gate all concurrent arrivals: only the single probe already in flight
+		// is allowed. Others are rejected until the probe resolves.
+		if cb.probeInFlight {
+			return false
+		}
+		cb.probeInFlight = true
 		return true
-	default:
+	default: // cbClosed
 		return true
 	}
 }
@@ -81,6 +93,9 @@ func (cb *circuitBreaker) record(success bool, now time.Time) {
 
 	switch cb.state {
 	case cbHalfOpen:
+		// Release the probe slot before transitioning so that if the circuit
+		// re-opens the next timeout cycle can issue a new probe.
+		cb.probeInFlight = false
 		if success {
 			cb.state = cbClosed
 			cb.failures = 0
@@ -105,6 +120,12 @@ func (cb *circuitBreaker) record(success bool, now time.Time) {
 // WithCircuitBreaker returns a Middleware that simulates cascading failures
 // by opening a circuit when the error rate within a time window exceeds
 // the threshold.
+//
+// When the circuit opens it stays open for timeout; after that it transitions
+// to half-open and allows exactly one probe request through. If the probe
+// succeeds the circuit closes; if it fails the circuit re-opens and the
+// timeout resets. Concurrent arrivals in half-open state are rejected with
+// ErrCircuitOpen until the probe resolves.
 func WithCircuitBreaker(threshold float64, window, timeout time.Duration) Middleware {
 	if math.IsNaN(threshold) || threshold < 0 || threshold > 1 {
 		panic("pulse: circuit breaker threshold must be between 0 and 1")
