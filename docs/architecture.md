@@ -253,12 +253,13 @@ Conversion helpers from the **`algoryn.io/fabric`** module (**`RunEventToProto`*
 
 1. Add a constant to `model/phase.go`
 2. Add the constant alias to `api.go`
-3. Add validation in `validateTest` in `api.go`
-4. Add validation in `validateConfig` in `config/config.go`
+3. Add validation in `pulse.ValidateConfig` in `api.go` — this is the single source of truth for phase rules; `config/` delegates to it automatically
+4. Add YAML fields to `phaseConfig` in `config/config.go` and map them in `toPulsePhases`
 5. Add a `run{Type}` function in `scheduler/scheduler.go`
 6. Add a case in `scheduler.Run`
-7. Add YAML fields to `phaseConfig` in `config/config.go`
-8. Add an example YAML to `examples/`
+7. Add an example YAML to `examples/`
+
+> Note: `config.validateConfig` only validates target-specific fields (method, URL, timeout). All phase, threshold, concurrency, and reporting rules live in `pulse.ValidateConfig` and are shared by both the library and the CLI config loader.
 
 ### Adding a new middleware
 

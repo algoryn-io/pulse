@@ -13,12 +13,31 @@ All notable changes to this project will be documented in this file.
 - `thresholds.maxDroppedRate` and `saturationPolicy` YAML settings
 - Optional interval snapshots through `Config.Reporting.Interval` and `reporting.interval`
 - Snapshot JSON output for transient load, failure, and latency analysis
+- `pulse.ValidateConfig(cfg Config) error` — exported function so packages that build a `pulse.Config` (e.g. `config/`) can reuse phase, threshold, concurrency, and reporting validation without duplicating rules
+- `transport.HTTPClientConfig` now exposes `MaxIdleConns`, `MaxIdleConnsPerHost`, and `DisableKeepAlives`; YAML config supports the same fields under `target` so connection-pool behavior can be tuned without writing Go code
+- `--dry-run` CLI flag: validates the config file, prints a per-phase summary and total duration, then exits without sending any traffic — safe to use in pre-flight checks and PR pipelines
+- `mockserver` modes `slow` (configurable `--slow-delay`, default 120ms), `flaky` (configurable `--flaky-rate`, default 0.3), and `down` (always 503); context-aware sleep in `slow` releases goroutines immediately on client disconnect
+- Benchmarks: `BenchmarkSchedulerConstant`, `BenchmarkSchedulerRamp`, `BenchmarkSchedulerStep` (scheduler), `BenchmarkEngineRun`, `BenchmarkEngineRunWithConcurrencyLimit`, `BenchmarkEngineRunDropPolicy`, `BenchmarkEngineRunMultiPhase` (engine), `BenchmarkAggregatorRecord`, `BenchmarkAggregatorRecordWithError`, `BenchmarkAggregatorRecord_Parallel`, `BenchmarkAggregatorResult` (metrics)
+- Optional SSRF policy: allowlist and denylist of hosts and CIDR ranges, enforced at HTTP client construction; opt-in via `transport.SSRFPolicy` so trusted YAML targets remain unrestricted by default
 
 ### Changed
 
 - YAML loading now rejects unknown fields and invalid operational limits before execution
 - Spike phases must fit entirely inside their enclosing phase
 - CLI text and JSON output now report generator saturation metrics
+- `config/` validation no longer duplicates phase, threshold, concurrency, or reporting rules — these are fully delegated to `pulse.ValidateConfig`; `config.validateConfig` only checks target-specific fields (method, URL, timeout)
+- Scheduler poll loop uses `time.NewTimer` + `Reset` instead of `time.After` to avoid leaking one timer channel allocation per poll iteration under high arrival rates
+- `WithRetry` middleware now checks `ctx.Err()` before each retry attempt and returns immediately on cancellation, instead of waiting for the next scheduled attempt
+- `mockserver` extracts each mode into a named constructor function (`healthyHandler`, `mixedErrorsHandler`, `slowHandler`, `flakyHandler`, `downHandler`) and requires an explicit `--mode` flag; the previous implicit default behavior is unchanged
+- CLI now requires exactly one positional `<config.yaml>` argument and returns a usage error when it is missing; the undocumented httpbin.org fallback has been removed
+
+### Fixed
+
+- Scheduler poll loop: replaced `time.After` with `time.NewTimer` + `Reset` to prevent a timer-channel leak on every poll tick at high arrival rates
+- `WithRetry`: context cancellation now aborts immediately instead of waiting for the retry delay to elapse
+- Middleware RNG: replaced a single global `rand.Source` protected by a mutex with a `sync.Pool` of per-goroutine RNG sources, eliminating lock contention under parallel scenario execution
+- Circuit breaker half-open: concurrent probes are now bounded by an atomic counter so only the first probe is admitted while the rest continue to be rejected, preventing thundering-herd re-admission during recovery
+- `--out` file writing: output is written to a temp file in the same directory and atomically renamed to the final path, preventing partial writes and defending against symlink-following attacks
 
 ---
 ## [v0.2.0] — 2026-03-24
