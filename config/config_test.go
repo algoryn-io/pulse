@@ -441,8 +441,8 @@ func TestLoadValidatesRequiredFields(t *testing.T) {
 	}
 
 	_, err := Load(path)
-	if err != errNoPhases {
-		t.Fatalf("expected %v, got %v", errNoPhases, err)
+	if err == nil {
+		t.Fatal("expected error for missing phases, got nil")
 	}
 }
 
@@ -463,8 +463,8 @@ func TestLoadRejectsNonPositivePhaseDuration(t *testing.T) {
 	}
 
 	_, err := Load(path)
-	if err != errNonPositivePhase {
-		t.Fatalf("expected %v, got %v", errNonPositivePhase, err)
+	if err == nil {
+		t.Fatal("expected error for non-positive phase duration, got nil")
 	}
 }
 
@@ -520,8 +520,8 @@ func TestLoadRejectsInvalidRampEndpoints(t *testing.T) {
 	}
 
 	_, err := Load(path)
-	if err != errInvalidRamp {
-		t.Fatalf("expected %v, got %v", errInvalidRamp, err)
+	if err == nil {
+		t.Fatal("expected error for invalid ramp endpoints, got nil")
 	}
 }
 
@@ -542,8 +542,8 @@ func TestLoadRejectsUnsupportedPhaseType(t *testing.T) {
 	}
 
 	_, err := Load(path)
-	if err != errUnsupportedPhaseType {
-		t.Fatalf("expected %v, got %v", errUnsupportedPhaseType, err)
+	if err == nil {
+		t.Fatal("expected error for unsupported phase type, got nil")
 	}
 }
 
@@ -564,8 +564,8 @@ func TestLoadRejectsNonPositiveArrivalRate(t *testing.T) {
 	}
 
 	_, err := Load(path)
-	if err != errNonPositiveRate {
-		t.Fatalf("expected %v, got %v", errNonPositiveRate, err)
+	if err == nil {
+		t.Fatal("expected error for non-positive arrival rate, got nil")
 	}
 }
 
@@ -599,63 +599,79 @@ func TestValidateConfigRejectsCONNECT(t *testing.T) {
 	}
 }
 
-func TestValidateConfigRejectsUnsupportedSaturationPolicy(t *testing.T) {
-	cfg := fileConfig{
-		Phases: []phaseConfig{
-			{Type: "constant", Duration: duration{Duration: time.Second}, ArrivalRate: 1},
-		},
-		Target:           targetConfig{URL: "https://pulse.test"},
-		SaturationPolicy: "queue",
+func TestLoadRejectsUnsupportedSaturationPolicy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	content := "" +
+		"phases:\n" +
+		"  - type: constant\n" +
+		"    duration: 1s\n" +
+		"    arrivalRate: 1\n" +
+		"target:\n" +
+		"  method: GET\n" +
+		"  url: https://pulse.test\n" +
+		"saturationPolicy: queue\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write yaml: %v", err)
 	}
 
-	err := validateConfig(cfg, http.MethodGet)
-	if !errors.Is(err, errUnsupportedSaturation) {
-		t.Fatalf("expected %v, got %v", errUnsupportedSaturation, err)
-	}
-}
-
-func TestValidateConfigRejectsInvalidSpike(t *testing.T) {
-	cfg := fileConfig{
-		Phases: []phaseConfig{
-			{
-				Type:          "spike",
-				Duration:      duration{Duration: time.Second},
-				From:          10,
-				To:            20,
-				SpikeDuration: duration{Duration: 0},
-			},
-		},
-		Target: targetConfig{URL: "https://pulse.test"},
-	}
-
-	err := validateConfig(cfg, http.MethodGet)
-	if !errors.Is(err, errInvalidSpike) {
-		t.Fatalf("expected %v, got %v", errInvalidSpike, err)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error for unsupported saturation policy, got nil")
 	}
 }
 
-func TestValidateConfigRejectsSpikeOutsidePhase(t *testing.T) {
-	cfg := fileConfig{
-		Phases: []phaseConfig{
-			{
-				Type:          "spike",
-				Duration:      duration{Duration: time.Second},
-				From:          10,
-				To:            20,
-				SpikeAt:       duration{Duration: 800 * time.Millisecond},
-				SpikeDuration: duration{Duration: 300 * time.Millisecond},
-			},
-		},
-		Target: targetConfig{URL: "https://pulse.test"},
+func TestLoadRejectsInvalidSpike(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	content := "" +
+		"phases:\n" +
+		"  - type: spike\n" +
+		"    duration: 1s\n" +
+		"    from: 10\n" +
+		"    to: 20\n" +
+		"    spikeDuration: 0s\n" +
+		"target:\n" +
+		"  method: GET\n" +
+		"  url: https://pulse.test\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write yaml: %v", err)
 	}
 
-	err := validateConfig(cfg, http.MethodGet)
-	if !errors.Is(err, errInvalidSpike) {
-		t.Fatalf("expected %v, got %v", errInvalidSpike, err)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error for invalid spike config, got nil")
 	}
 }
 
-func TestValidateConfigRejectsInvalidOperationalLimits(t *testing.T) {
+func TestLoadRejectsSpikeOutsidePhase(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	content := "" +
+		"phases:\n" +
+		"  - type: spike\n" +
+		"    duration: 1s\n" +
+		"    from: 10\n" +
+		"    to: 20\n" +
+		"    spikeAt: 800ms\n" +
+		"    spikeDuration: 300ms\n" +
+		"target:\n" +
+		"  method: GET\n" +
+		"  url: https://pulse.test\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error for spike that extends past phase duration, got nil")
+	}
+}
+
+func TestValidateConfigRejectsInvalidTargetFields(t *testing.T) {
+	// validateConfig is responsible only for target-specific fields (method, URL,
+	// timeout). Phase, threshold, concurrency, and reporting checks are delegated
+	// to pulse.ValidateConfig and are covered by api_test.go.
 	valid := fileConfig{
 		Phases: []phaseConfig{
 			{Type: "constant", Duration: duration{Duration: time.Second}, ArrivalRate: 1},
@@ -669,39 +685,9 @@ func TestValidateConfigRejectsInvalidOperationalLimits(t *testing.T) {
 		wantErr error
 	}{
 		{
-			name:    "negative max concurrency",
-			mutate:  func(cfg *fileConfig) { cfg.MaxConcurrency = -1 },
-			wantErr: errNegativeMaxConcurrency,
-		},
-		{
-			name:    "max concurrency above limit",
-			mutate:  func(cfg *fileConfig) { cfg.MaxConcurrency = maxConcurrency + 1 },
-			wantErr: errMaxConcurrencyTooHigh,
-		},
-		{
-			name:    "error rate above one",
-			mutate:  func(cfg *fileConfig) { cfg.Thresholds.ErrorRate = 1.1 },
-			wantErr: errErrorRateAboveOne,
-		},
-		{
-			name:    "negative dropped rate",
-			mutate:  func(cfg *fileConfig) { cfg.Thresholds.MaxDroppedRate = -0.1 },
-			wantErr: errNegativeDroppedRate,
-		},
-		{
 			name:    "negative timeout",
 			mutate:  func(cfg *fileConfig) { cfg.Target.Timeout.Duration = -time.Second },
 			wantErr: errNegativeTargetTimeout,
-		},
-		{
-			name:    "negative reporting interval",
-			mutate:  func(cfg *fileConfig) { cfg.Reporting.Interval.Duration = -time.Second },
-			wantErr: errNegativeReportInterval,
-		},
-		{
-			name:    "reporting interval below limit",
-			mutate:  func(cfg *fileConfig) { cfg.Reporting.Interval.Duration = time.Nanosecond },
-			wantErr: errReportIntervalTooSmall,
 		},
 		{
 			name:    "relative target URL",
