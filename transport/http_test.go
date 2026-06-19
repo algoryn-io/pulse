@@ -286,6 +286,73 @@ func TestHTTPClientRejectsOversizedResponseBody(t *testing.T) {
 	}
 }
 
+func TestHTTPClientWithZeroPoolFieldsUsesDefaultTransport(t *testing.T) {
+	// When no pool fields are set, Transport must be nil so the http.Client
+	// falls back to http.DefaultTransport without any wrapping.
+	client := NewHTTPClientWith(HTTPClientConfig{})
+	if client.client.Transport != nil {
+		t.Fatalf("expected nil Transport (falls back to DefaultTransport), got %T", client.client.Transport)
+	}
+}
+
+func TestHTTPClientWithSetsMaxIdleConns(t *testing.T) {
+	client := NewHTTPClientWith(HTTPClientConfig{MaxIdleConns: 50})
+	tr, ok := client.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", client.client.Transport)
+	}
+	if tr.MaxIdleConns != 50 {
+		t.Fatalf("expected MaxIdleConns 50, got %d", tr.MaxIdleConns)
+	}
+}
+
+func TestHTTPClientWithSetsMaxIdleConnsPerHost(t *testing.T) {
+	client := NewHTTPClientWith(HTTPClientConfig{MaxIdleConnsPerHost: 20})
+	tr, ok := client.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", client.client.Transport)
+	}
+	if tr.MaxIdleConnsPerHost != 20 {
+		t.Fatalf("expected MaxIdleConnsPerHost 20, got %d", tr.MaxIdleConnsPerHost)
+	}
+}
+
+func TestHTTPClientWithDisablesKeepAlives(t *testing.T) {
+	client := NewHTTPClientWith(HTTPClientConfig{DisableKeepAlives: true})
+	tr, ok := client.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", client.client.Transport)
+	}
+	if !tr.DisableKeepAlives {
+		t.Fatal("expected DisableKeepAlives to be true")
+	}
+}
+
+func TestHTTPClientWithPoolConfigClonesDefaultTransportSettings(t *testing.T) {
+	// The cloned transport must preserve http.DefaultTransport's proxy and
+	// TLS settings rather than use zero values.
+	dt := http.DefaultTransport.(*http.Transport)
+	client := NewHTTPClientWith(HTTPClientConfig{MaxIdleConns: 10})
+	tr := client.client.Transport.(*http.Transport)
+	if tr.TLSHandshakeTimeout != dt.TLSHandshakeTimeout {
+		t.Fatalf("TLSHandshakeTimeout: want %v, got %v", dt.TLSHandshakeTimeout, tr.TLSHandshakeTimeout)
+	}
+}
+
+func TestHTTPClientWithCustomTransportTakesPrecedenceOverPoolConfig(t *testing.T) {
+	custom := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return responseWithStatus(http.StatusOK, ""), nil
+	})
+	client := NewHTTPClientWith(HTTPClientConfig{
+		Transport:           custom,
+		MaxIdleConns:        99,
+		MaxIdleConnsPerHost: 9,
+	})
+	if client.client.Transport != http.RoundTripper(custom) {
+		t.Fatalf("expected custom Transport, got %T", client.client.Transport)
+	}
+}
+
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
