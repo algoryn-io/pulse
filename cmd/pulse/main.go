@@ -1,22 +1,21 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"time"
 
 	pulse "algoryn.io/pulse"
 	"algoryn.io/pulse/config"
-	"algoryn.io/pulse/transport"
 )
 
-const usageMessage = "usage: pulse run [config.yaml] [--format text|json] [--quiet] [--seed <n>] [--out <file>] [--junit <file>]\n\nRuns a sample load test or a YAML-defined test"
+const usageMessage = "usage: pulse run <config.yaml> [--format text|json] [--quiet] [--dry-run] [--seed <n>] [--out <file>] [--junit <file>]\n\nRuns the load test defined in <config.yaml>"
 const textBanner = "Pulse"
 const textBannerSubtitle = "Programmable load testing"
 const textStatusPassed = "✔ Test passed"
@@ -29,6 +28,7 @@ type runOptions struct {
 	configPath string
 	format     string
 	quiet      bool
+	dryRun     bool
 	seed       *int64
 	outFile    string
 	junitFile  string
@@ -162,8 +162,14 @@ func run(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// CLI --seed takes precedence over seed in YAML (Config.Seed is applied
+	// inside RunContext only when SetSeed has not been called).
 	if options.seed != nil {
 		pulse.SetSeed(*options.seed)
+	}
+
+	if options.dryRun {
+		return runDryRun(options, stdout)
 	}
 
 	executeArgs := []string{}
@@ -178,30 +184,17 @@ func run(args []string, stdout io.Writer) error {
 	showResults := runErr == nil || isThresholdEvaluationFailureOnly(runErr)
 
 	if options.outFile != "" {
-		file, err := os.Create(options.outFile)
-		if err != nil {
-			return err
-		}
-
-		if err := writeJSON(file, result, runErr == nil); err != nil {
-			file.Close()
-			return err
-		}
-		if err := file.Close(); err != nil {
+		if err := writeFileAtomic(options.outFile, func(w io.Writer) error {
+			return writeJSON(w, result, runErr == nil)
+		}); err != nil {
 			return err
 		}
 	}
 
 	if options.junitFile != "" {
-		file, err := os.Create(options.junitFile)
-		if err != nil {
-			return err
-		}
-		if err := writeJUnit(file, result, runErr); err != nil {
-			file.Close()
-			return err
-		}
-		if err := file.Close(); err != nil {
+		if err := writeFileAtomic(options.junitFile, func(w io.Writer) error {
+			return writeJUnit(w, result, runErr)
+		}); err != nil {
 			return err
 		}
 	}
@@ -226,32 +219,13 @@ func writeBanner(w io.Writer) {
 }
 
 func runTest(args []string) (pulse.Result, error) {
-	if len(args) == 1 {
-		test, err := config.Load(args[0])
-		if err != nil {
-			return pulse.Result{}, err
-		}
-
-		return pulse.Run(test)
+	if len(args) != 1 {
+		return pulse.Result{}, errUsage
 	}
-
-	client := transport.NewHTTPClient()
-	test := pulse.Test{
-		Config: pulse.Config{
-			Phases: []pulse.Phase{
-				{
-					Type:        pulse.PhaseTypeConstant,
-					Duration:    3 * time.Second,
-					ArrivalRate: 5,
-				},
-			},
-			MaxConcurrency: 5,
-		},
-		Scenario: func(ctx context.Context) (int, error) {
-			return client.Get(ctx, "https://httpbin.org/get")
-		},
+	test, err := config.Load(args[0])
+	if err != nil {
+		return pulse.Result{}, err
 	}
-
 	return pulse.Run(test)
 }
 
@@ -287,6 +261,8 @@ func parseRunArgs(args []string) (runOptions, error) {
 			if options.format == "json" {
 				return runOptions{}, errUsage
 			}
+		case "--dry-run":
+			options.dryRun = true
 		case "--seed":
 			if i+1 >= len(args) {
 				return runOptions{}, errUsage
@@ -326,6 +302,91 @@ func parseRunArgs(args []string) (runOptions, error) {
 		return runOptions{}, errUsage
 	}
 	return options, nil
+}
+
+// runDryRun loads and validates the config, prints a phase summary, and
+// returns without sending any traffic. It requires a config file.
+func runDryRun(options runOptions, w io.Writer) error {
+	if options.configPath == "" {
+		return fmt.Errorf("pulse: --dry-run requires a config file\n\n%s", usageMessage)
+	}
+	test, err := config.Load(options.configPath)
+	if err != nil {
+		return err
+	}
+	writeDryRunSummary(w, options.configPath, test.Config, options.quiet)
+	return nil
+}
+
+// writeDryRunSummary prints a human-readable summary of cfg to w.
+func writeDryRunSummary(w io.Writer, path string, cfg pulse.Config, quiet bool) {
+	if !quiet {
+		fmt.Fprintln(w, textBanner+" (dry run)")
+		fmt.Fprintln(w, textBannerSubtitle)
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "Config: %s\n", path)
+		fmt.Fprintln(w)
+	}
+
+	fmt.Fprintf(w, "Phases (%d):\n", len(cfg.Phases))
+	var total time.Duration
+	for i, p := range cfg.Phases {
+		total += p.Duration
+		switch {
+		case p.IsConstant():
+			fmt.Fprintf(w, "  %d  constant  %d rps  %v\n", i+1, p.ArrivalRate, p.Duration)
+		case p.IsRamp():
+			fmt.Fprintf(w, "  %d  ramp      %d→%d rps  %v\n", i+1, p.From, p.To, p.Duration)
+		case p.IsStep():
+			fmt.Fprintf(w, "  %d  step      %d→%d rps  %d steps  %v\n", i+1, p.From, p.To, p.Steps, p.Duration)
+		case p.IsSpike():
+			fmt.Fprintf(w, "  %d  spike     %d→%d rps  spike for %v at %v  %v\n",
+				i+1, p.From, p.To, p.SpikeDuration, p.SpikeAt, p.Duration)
+		default:
+			fmt.Fprintf(w, "  %d  %s  %v\n", i+1, p.Type, p.Duration)
+		}
+	}
+	fmt.Fprintf(w, "Total duration: %v\n", total)
+
+	if !quiet {
+		fmt.Fprintln(w)
+		if cfg.MaxConcurrency > 0 {
+			fmt.Fprintf(w, "MaxConcurrency: %d\n", cfg.MaxConcurrency)
+		} else {
+			fmt.Fprintln(w, "MaxConcurrency: unlimited")
+		}
+		if cfg.SaturationPolicy != "" {
+			fmt.Fprintf(w, "SaturationPolicy: %s\n", cfg.SaturationPolicy)
+		} else {
+			fmt.Fprintln(w, "SaturationPolicy: drop (default)")
+		}
+
+		t := cfg.Thresholds
+		hasThresholds := t.ErrorRate > 0 || t.MaxMeanLatency > 0 || t.MaxP95Latency > 0 ||
+			t.MaxP99Latency > 0 || t.MaxDroppedRate > 0
+		if hasThresholds {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "Thresholds:")
+			if t.ErrorRate > 0 {
+				fmt.Fprintf(w, "  error_rate < %g\n", t.ErrorRate)
+			}
+			if t.MaxMeanLatency > 0 {
+				fmt.Fprintf(w, "  mean_latency < %v\n", t.MaxMeanLatency)
+			}
+			if t.MaxP95Latency > 0 {
+				fmt.Fprintf(w, "  p95_latency < %v\n", t.MaxP95Latency)
+			}
+			if t.MaxP99Latency > 0 {
+				fmt.Fprintf(w, "  p99_latency < %v\n", t.MaxP99Latency)
+			}
+			if t.MaxDroppedRate > 0 {
+				fmt.Fprintf(w, "  dropped_rate < %g\n", t.MaxDroppedRate)
+			}
+		}
+	}
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "✔ Config is valid. No traffic will be sent.")
 }
 
 func writeTextOutput(w io.Writer, result pulse.Result, quiet bool, thresholdFailed bool) {
@@ -569,4 +630,33 @@ func toJSONThresholds(outcomes []pulse.ThresholdOutcome) []jsonThreshold {
 		}
 	}
 	return out
+}
+
+// writeFileAtomic writes to a temporary file in the same directory as path
+// and renames it into place when the write function returns nil. This avoids
+// truncating the target on error and prevents symlink-based attacks: the temp
+// file is created with O_EXCL (via os.CreateTemp) so it is never a symlink.
+func writeFileAtomic(path string, write func(io.Writer) error) (retErr error) {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".pulse-out-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+
+	// Always clean up the temp file on failure.
+	defer func() {
+		if retErr != nil {
+			tmp.Close()
+			os.Remove(tmpName)
+		}
+	}()
+
+	if err := write(tmp); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

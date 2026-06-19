@@ -18,35 +18,13 @@ import (
 )
 
 var (
-	errNoPhases               = errors.New("config: at least one phase is required")
-	errEmptyPhaseType         = errors.New("config: phase type is required")
-	errNonPositivePhase       = errors.New("config: phase duration must be positive")
-	errNonPositiveRate        = errors.New("config: phase arrival rate must be positive")
-	errInvalidRamp            = errors.New("config: ramp phase from and to must be positive")
-	errInvalidStep            = errors.New("config: step phase requires positive from, to and steps")
-	errInvalidSpike           = errors.New("config: spike phase requires positive from, to and spikeDuration")
-	errUnsupportedPhaseType   = errors.New("config: unsupported phase type")
-	errEmptyTargetMethod      = errors.New("config: target method is required")
-	errEmptyTargetURL         = errors.New("config: target url is required")
-	errUnsupportedMethod      = errors.New("config: unsupported target method")
-	errUnsupportedSaturation  = errors.New("config: unsupported saturation policy")
-	errNegativeMaxConcurrency = errors.New("config: maxConcurrency must not be negative")
-	errNegativeErrorRate      = errors.New("config: threshold errorRate must not be negative")
-	errErrorRateAboveOne      = errors.New("config: threshold errorRate must not be greater than 1")
-	errNegativeDroppedRate    = errors.New("config: threshold maxDroppedRate must not be negative")
-	errDroppedRateAboveOne    = errors.New("config: threshold maxDroppedRate must not be greater than 1")
-	errNegativeTargetTimeout  = errors.New("config: target timeout must not be negative")
-	errNegativeMeanLatency    = errors.New("config: threshold maxMeanLatency must not be negative")
-	errNegativeP95Latency     = errors.New("config: threshold maxP95Latency must not be negative")
-	errNegativeP99Latency     = errors.New("config: threshold maxP99Latency must not be negative")
-	errInvalidTargetURL       = errors.New("config: target url must be an absolute http or https URL")
-	errNegativeReportInterval = errors.New("config: reporting interval must not be negative")
-	errReportIntervalTooSmall = errors.New("config: reporting interval must be at least 10ms when enabled")
-	errMaxConcurrencyTooHigh  = errors.New("config: maxConcurrency must not exceed 1000000")
+	errEmptyTargetMethod     = errors.New("config: target method is required")
+	errEmptyTargetURL        = errors.New("config: target url is required")
+	errUnsupportedMethod     = errors.New("config: unsupported target method")
+	errNegativeTargetTimeout = errors.New("config: target timeout must not be negative")
+	errInvalidTargetURL      = errors.New("config: target url must be an absolute http or https URL")
 )
 
-const minReportingInterval = 10 * time.Millisecond
-const maxConcurrency = 1_000_000
 const maxConfigBytes = 1 << 20
 
 type httpClient interface {
@@ -77,11 +55,14 @@ type phaseConfig struct {
 }
 
 type targetConfig struct {
-	Method  string            `yaml:"method"`
-	URL     string            `yaml:"url"`
-	Body    string            `yaml:"body"`
-	Headers map[string]string `yaml:"headers"`
-	Timeout duration          `yaml:"timeout"`
+	Method              string            `yaml:"method"`
+	URL                 string            `yaml:"url"`
+	Body                string            `yaml:"body"`
+	Headers             map[string]string `yaml:"headers"`
+	Timeout             duration          `yaml:"timeout"`
+	MaxIdleConns        int               `yaml:"maxIdleConns"`
+	MaxIdleConnsPerHost int               `yaml:"maxIdleConnsPerHost"`
+	DisableKeepAlives   bool              `yaml:"disableKeepAlives"`
 }
 
 type thresholdsConfig struct {
@@ -102,8 +83,11 @@ type duration struct {
 
 var newHTTPClient = func(cfg fileConfig) httpClient {
 	return transport.NewHTTPClientWith(transport.HTTPClientConfig{
-		Timeout: cfg.Target.Timeout.Duration,
-		Headers: cfg.Target.Headers,
+		Timeout:             cfg.Target.Timeout.Duration,
+		Headers:             cfg.Target.Headers,
+		MaxIdleConns:        cfg.Target.MaxIdleConns,
+		MaxIdleConnsPerHost: cfg.Target.MaxIdleConnsPerHost,
+		DisableKeepAlives:   cfg.Target.DisableKeepAlives,
 	})
 }
 
@@ -146,28 +130,37 @@ func Load(path string) (pulse.Test, error) {
 
 	method := strings.ToUpper(strings.TrimSpace(cfg.Target.Method))
 
+	// Validate target-specific fields (method, URL, timeout). Phase, threshold,
+	// concurrency, and reporting validation is delegated to pulse.ValidateConfig
+	// below, which avoids duplicating those rules here.
 	if err := validateConfig(cfg, method); err != nil {
+		return pulse.Test{}, err
+	}
+
+	pulseCfg := pulse.Config{
+		Phases:           toPulsePhases(cfg.Phases),
+		MaxConcurrency:   cfg.MaxConcurrency,
+		Seed:             cfg.Seed,
+		SaturationPolicy: pulse.SaturationPolicy(strings.ToLower(strings.TrimSpace(cfg.SaturationPolicy))),
+		Thresholds: pulse.Thresholds{
+			ErrorRate:      cfg.Thresholds.ErrorRate,
+			MaxMeanLatency: cfg.Thresholds.MaxMeanLatency.Duration,
+			MaxP95Latency:  cfg.Thresholds.MaxP95Latency.Duration,
+			MaxP99Latency:  cfg.Thresholds.MaxP99Latency.Duration,
+			MaxDroppedRate: cfg.Thresholds.MaxDroppedRate,
+		},
+		Reporting: pulse.ReportingConfig{
+			Interval: cfg.Reporting.Interval.Duration,
+		},
+	}
+
+	if err := pulse.ValidateConfig(pulseCfg); err != nil {
 		return pulse.Test{}, err
 	}
 
 	client := newHTTPClient(cfg)
 	test := pulse.Test{
-		Config: pulse.Config{
-			Phases:           toPulsePhases(cfg.Phases),
-			MaxConcurrency:   cfg.MaxConcurrency,
-			SaturationPolicy: pulse.SaturationPolicy(strings.ToLower(strings.TrimSpace(cfg.SaturationPolicy))),
-			Thresholds: pulse.Thresholds{
-				ErrorRate:      cfg.Thresholds.ErrorRate,
-				MaxMeanLatency: cfg.Thresholds.MaxMeanLatency.Duration,
-				MaxP95Latency:  cfg.Thresholds.MaxP95Latency.Duration,
-				MaxP99Latency:  cfg.Thresholds.MaxP99Latency.Duration,
-				MaxDroppedRate: cfg.Thresholds.MaxDroppedRate,
-			},
-			Reporting: pulse.ReportingConfig{
-				Interval: cfg.Reporting.Interval.Duration,
-			},
-			Seed: cfg.Seed,
-		},
+		Config: pulseCfg,
 		Scenario: func(ctx context.Context) (int, error) {
 			switch method {
 			case http.MethodGet:
@@ -187,93 +180,18 @@ func Load(path string) (pulse.Test, error) {
 	return test, nil
 }
 
+// validateConfig checks the target-specific fields of a YAML config: the HTTP
+// method, URL (must be absolute http/https), and timeout. All other validation
+// (phases, thresholds, concurrency, saturation policy, reporting) is delegated
+// to pulse.ValidateConfig, which is called after the pulse.Config is built in
+// Load.
 func validateConfig(cfg fileConfig, method string) error {
-	if len(cfg.Phases) == 0 {
-		return errNoPhases
-	}
-
-	policy := strings.ToLower(strings.TrimSpace(cfg.SaturationPolicy))
-	if policy != "" &&
-		policy != string(pulse.SaturationPolicyDrop) &&
-		policy != string(pulse.SaturationPolicyBlock) {
-		return errUnsupportedSaturation
-	}
-
-	if cfg.MaxConcurrency < 0 {
-		return errNegativeMaxConcurrency
-	}
-	if cfg.MaxConcurrency > maxConcurrency {
-		return errMaxConcurrencyTooHigh
-	}
-	if cfg.Thresholds.ErrorRate < 0 {
-		return errNegativeErrorRate
-	}
-	if cfg.Thresholds.ErrorRate > 1 {
-		return errErrorRateAboveOne
-	}
-	if cfg.Thresholds.MaxDroppedRate < 0 {
-		return errNegativeDroppedRate
-	}
-	if cfg.Thresholds.MaxDroppedRate > 1 {
-		return errDroppedRateAboveOne
-	}
-	if cfg.Thresholds.MaxMeanLatency.Duration < 0 {
-		return errNegativeMeanLatency
-	}
-	if cfg.Thresholds.MaxP95Latency.Duration < 0 {
-		return errNegativeP95Latency
-	}
-	if cfg.Thresholds.MaxP99Latency.Duration < 0 {
-		return errNegativeP99Latency
-	}
 	if cfg.Target.Timeout.Duration < 0 {
 		return errNegativeTargetTimeout
 	}
-	if cfg.Reporting.Interval.Duration < 0 {
-		return errNegativeReportInterval
-	}
-	if cfg.Reporting.Interval.Duration > 0 && cfg.Reporting.Interval.Duration < minReportingInterval {
-		return errReportIntervalTooSmall
-	}
-
-	for _, phase := range cfg.Phases {
-		if strings.TrimSpace(phase.Type) == "" {
-			return errEmptyPhaseType
-		}
-
-		if phase.Duration.Duration <= 0 {
-			return errNonPositivePhase
-		}
-
-		pt := strings.ToLower(strings.TrimSpace(phase.Type))
-		switch pt {
-		case string(pulse.PhaseTypeRamp):
-			if phase.From <= 0 || phase.To <= 0 {
-				return errInvalidRamp
-			}
-		case string(pulse.PhaseTypeConstant):
-			if phase.ArrivalRate <= 0 {
-				return errNonPositiveRate
-			}
-		case string(pulse.PhaseTypeStep):
-			if phase.From <= 0 || phase.To <= 0 || phase.Steps <= 0 {
-				return errInvalidStep
-			}
-		case string(pulse.PhaseTypeSpike):
-			if phase.From <= 0 || phase.To <= 0 || phase.SpikeAt.Duration < 0 ||
-				phase.SpikeDuration.Duration <= 0 ||
-				phase.SpikeAt.Duration+phase.SpikeDuration.Duration > phase.Duration.Duration {
-				return errInvalidSpike
-			}
-		default:
-			return errUnsupportedPhaseType
-		}
-	}
-
 	if method == "" {
 		return errEmptyTargetMethod
 	}
-
 	if strings.TrimSpace(cfg.Target.URL) == "" {
 		return errEmptyTargetURL
 	}
@@ -282,7 +200,6 @@ func validateConfig(cfg fileConfig, method string) error {
 		(targetURL.Scheme != "http" && targetURL.Scheme != "https") {
 		return errInvalidTargetURL
 	}
-
 	switch method {
 	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
 		return nil

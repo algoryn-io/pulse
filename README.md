@@ -94,6 +94,7 @@ pulse run path/to/config.yaml
 
 | Flag | Description |
 |------|-------------|
+| `--dry-run` | Validate config and print a phase summary without sending any traffic. Safe for pre-flight checks and PR pipelines. |
 | `--json` | Print results as **JSON** on stdout. |
 | `--out <file>` | Write the same JSON object to a file (can be combined with `--json`). |
 | `--junit <file>` | Write a **JUnit XML** report for CI (thresholds become individual test cases). |
@@ -112,6 +113,9 @@ phases:
 target:
   method: GET
   url: http://localhost:8080
+  timeout: 10s          # per-request timeout (default: 30s)
+  maxIdleConns: 100     # connection pool size across all hosts
+  maxIdleConnsPerHost: 20
 
 maxConcurrency: 4
 saturationPolicy: drop
@@ -126,7 +130,22 @@ thresholds:
   maxP99Latency: 200ms
 ```
 
-Run against a live target or, for a quick check, start the bundled mock in another terminal: `go run ./cmd/mockserver -mode healthy` and point the URL at it. More examples live under [`examples/`](examples/).
+Run against a live target or, for a quick check, start the bundled mock in another terminal and point the URL at it. More examples live under [`examples/`](examples/).
+
+**Mockserver modes**
+
+| Flag | Description |
+|------|-------------|
+| `--mode healthy` | Always 200 OK (default). |
+| `--mode mixed-errors` | Alternates 200 / 500 on successive requests. |
+| `--mode slow` | Delays every response by `--slow-delay` (default `120ms`); respects context cancellation. |
+| `--mode flaky` | Returns 500 for `--flaky-rate` fraction of requests (default `0.3`). |
+| `--mode down` | Always 503 Service Unavailable. |
+
+```sh
+go run ./cmd/mockserver --mode slow --slow-delay 500ms
+go run ./cmd/mockserver --mode flaky --flaky-rate 0.4
+```
 
 ### JSON result shape (summary)
 

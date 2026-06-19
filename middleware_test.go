@@ -477,6 +477,30 @@ func TestWithRetryRespectsContextCancellationDuringBackoff(t *testing.T) {
 	}
 }
 
+func TestWithRetryAbortsWhenScenarioReturnsContextError(t *testing.T) {
+	// When the scenario itself returns because the context was canceled (e.g. a
+	// deadline hit inside next(ctx)), WithRetry must not schedule another attempt —
+	// retrying with an already-expired context would fail immediately and only waste
+	// goroutine cycles.
+	calls := 0
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately so the first call sees ctx.Err() != nil
+
+	scenario := Apply(func(ctx context.Context) (int, error) {
+		calls++
+		return 0, ctx.Err()
+	}, WithRetry(5, time.Millisecond))
+
+	_, err := scenario(ctx)
+
+	if calls != 1 {
+		t.Fatalf("expected exactly 1 call (no retries on ctx error), got %d", calls)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
 func TestWithRetryZeroDoesNotRetry(t *testing.T) {
 	calls := 0
 
@@ -648,6 +672,53 @@ func TestWithBulkheadZeroUsesOne(t *testing.T) {
 
 	close(release)
 	<-firstDone
+}
+
+func TestSetSeedMakesRandomMiddlewaresDeterministic(t *testing.T) {
+	// Two calls with the same seed and the same single-goroutine execution order
+	// must produce identical injected-fault sequences.
+	buildSequence := func() []bool {
+		SetSeed(42)
+		scenario := Apply(func(context.Context) (int, error) {
+			return http.StatusOK, nil
+		}, WithErrorRate(0.5), WithJitter(time.Millisecond, 3*time.Millisecond, 0.5))
+
+		out := make([]bool, 0, 10)
+		for range 10 {
+			_, err := scenario(context.Background())
+			out = append(out, errors.Is(err, ErrInjected))
+		}
+		return out
+	}
+
+	got1 := buildSequence()
+	got2 := buildSequence()
+
+	if !reflect.DeepEqual(got1, got2) {
+		t.Fatalf("expected deterministic sequence with same seed:\n  run1: %v\n  run2: %v", got1, got2)
+	}
+}
+
+func TestSetSeedDifferentSeedsProduceDifferentSequences(t *testing.T) {
+	run := func(seed int64) []bool {
+		SetSeed(seed)
+		scenario := Apply(func(context.Context) (int, error) {
+			return http.StatusOK, nil
+		}, WithErrorRate(0.5))
+		out := make([]bool, 0, 20)
+		for range 20 {
+			_, err := scenario(context.Background())
+			out = append(out, errors.Is(err, ErrInjected))
+		}
+		return out
+	}
+
+	got1 := run(1)
+	got2 := run(2)
+
+	if reflect.DeepEqual(got1, got2) {
+		t.Fatal("expected different sequences for different seeds, but got identical results")
+	}
 }
 
 func TestWithRetryAndWithBulkheadComposeWithRunT(t *testing.T) {

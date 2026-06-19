@@ -20,6 +20,37 @@ type HTTPClientConfig struct {
 	Timeout          time.Duration
 	MaxResponseBytes int64
 	Headers          map[string]string
+
+	// Transport is an optional custom http.RoundTripper. When set it takes
+	// precedence over MaxIdleConns, MaxIdleConnsPerHost, and DisableKeepAlives.
+	// Use this to wrap the transport with additional behaviour such as SSRF
+	// protection:
+	//
+	//   import "algoryn.io/pulse/internal/ssrf"
+	//   rt := ssrf.NewRoundTripper(ssrf.DefaultDenyPrivatePolicy(), nil)
+	//   client := transport.NewHTTPClientWith(transport.HTTPClientConfig{Transport: rt})
+	Transport http.RoundTripper
+
+	// MaxIdleConns is the maximum number of idle (keep-alive) connections
+	// across all hosts. Zero means no limit. When this or MaxIdleConnsPerHost
+	// or DisableKeepAlives is set, http.DefaultTransport is cloned and only
+	// the specified fields are overridden, so TLS, proxy, and dial settings
+	// remain at their standard values.
+	// Ignored when Transport is set.
+	MaxIdleConns int
+
+	// MaxIdleConnsPerHost is the maximum number of idle connections kept per
+	// host. The Go default is 2, which is often too low for load testing. Set
+	// this to at least the expected concurrency for the target host to avoid
+	// connection churn under high arrival rates.
+	// Ignored when Transport is set.
+	MaxIdleConnsPerHost int
+
+	// DisableKeepAlives, when true, disables HTTP keep-alives and opens a
+	// fresh TCP connection for every request. Useful for measuring per-request
+	// overhead without the benefit of connection reuse.
+	// Ignored when Transport is set.
+	DisableKeepAlives bool
 }
 
 // HTTPClient is the minimal HTTP transport for Pulse scenarios.
@@ -43,8 +74,25 @@ func NewHTTPClientWith(cfg HTTPClientConfig) *HTTPClient {
 	if cfg.MaxResponseBytes <= 0 {
 		cfg.MaxResponseBytes = DefaultMaxResponseBytes
 	}
+	httpClient := &http.Client{Timeout: cfg.Timeout}
+	switch {
+	case cfg.Transport != nil:
+		httpClient.Transport = cfg.Transport
+	case cfg.MaxIdleConns > 0 || cfg.MaxIdleConnsPerHost > 0 || cfg.DisableKeepAlives:
+		// Clone the default transport so TLS, proxy, and dial settings are
+		// preserved, then apply only the fields the caller explicitly set.
+		t := http.DefaultTransport.(*http.Transport).Clone()
+		if cfg.MaxIdleConns > 0 {
+			t.MaxIdleConns = cfg.MaxIdleConns
+		}
+		if cfg.MaxIdleConnsPerHost > 0 {
+			t.MaxIdleConnsPerHost = cfg.MaxIdleConnsPerHost
+		}
+		t.DisableKeepAlives = cfg.DisableKeepAlives
+		httpClient.Transport = t
+	}
 	return &HTTPClient{
-		client:           &http.Client{Timeout: cfg.Timeout},
+		client:           httpClient,
 		headers:          cloneHeaderMap(cfg.Headers),
 		maxResponseBytes: cfg.MaxResponseBytes,
 	}

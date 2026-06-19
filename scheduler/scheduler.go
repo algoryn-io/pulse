@@ -58,6 +58,32 @@ func Run(ctx context.Context, phase Phase, scenario func(context.Context) error)
 	}
 }
 
+// newStoppedTimer creates a timer that is immediately stopped and drained,
+// ready for use with Reset in a poll loop without any initial allocation waste.
+func newStoppedTimer() *time.Timer {
+	t := time.NewTimer(0)
+	if !t.Stop() {
+		<-t.C
+	}
+	return t
+}
+
+// pollWait sleeps for d or until ctx is done, using the provided timer to avoid
+// allocating a new channel on every iteration. After pollWait returns nil the
+// timer has fired and its channel is empty, so the next Reset call is safe.
+func pollWait(ctx context.Context, t *time.Timer, d time.Duration) error {
+	t.Reset(d)
+	select {
+	case <-ctx.Done():
+		if !t.Stop() {
+			<-t.C
+		}
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
 func runConstant(ctx context.Context, phase Phase, scenario func(context.Context) error) error {
 	capacity := phase.ArrivalRate
 	if capacity < 1 {
@@ -67,7 +93,10 @@ func runConstant(ctx context.Context, phase Phase, scenario func(context.Context
 	// can apply backpressure (wrappedScenario returns before work finishes).
 	bucket := internal.NewDrainedTokenBucket(capacity, float64(phase.ArrivalRate))
 	deadline := time.Now().Add(phase.Duration)
-	poll := time.Millisecond
+	const poll = time.Millisecond
+
+	timer := newStoppedTimer()
+	defer timer.Stop()
 
 	for {
 		select {
@@ -85,12 +114,8 @@ func runConstant(ctx context.Context, phase Phase, scenario func(context.Context
 			if err := scenario(ctx); err != nil {
 				return err
 			}
-		} else {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(poll):
-			}
+		} else if err := pollWait(ctx, timer, poll); err != nil {
+			return err
 		}
 	}
 }
@@ -112,7 +137,10 @@ func runRamp(ctx context.Context, phase Phase, scenario func(context.Context) er
 		initialRate = 1
 	}
 	bucket := internal.NewDrainedTokenBucket(capacity, initialRate)
-	poll := time.Millisecond
+	const poll = time.Millisecond
+
+	timer := newStoppedTimer()
+	defer timer.Stop()
 
 	for {
 		select {
@@ -142,12 +170,8 @@ func runRamp(ctx context.Context, phase Phase, scenario func(context.Context) er
 			if err := scenario(ctx); err != nil {
 				return err
 			}
-		} else {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(poll):
-			}
+		} else if err := pollWait(ctx, timer, poll); err != nil {
+			return err
 		}
 	}
 }
@@ -165,8 +189,11 @@ func runStep(ctx context.Context, phase Phase, scenario func(context.Context) er
 	}
 
 	bucket := internal.NewDrainedTokenBucket(capacity, float64(phase.From))
-	poll := time.Millisecond
+	const poll = time.Millisecond
 	currentStep := -1 // force SetRefillRate on first iteration
+
+	timer := newStoppedTimer()
+	defer timer.Stop()
 
 	for {
 		select {
@@ -210,12 +237,8 @@ func runStep(ctx context.Context, phase Phase, scenario func(context.Context) er
 			if err := scenario(ctx); err != nil {
 				return err
 			}
-		} else {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(poll):
-			}
+		} else if err := pollWait(ctx, timer, poll); err != nil {
+			return err
 		}
 	}
 }
@@ -235,8 +258,11 @@ func runSpike(ctx context.Context, phase Phase, scenario func(context.Context) e
 	}
 
 	bucket := internal.NewDrainedTokenBucket(capacity, float64(phase.From))
-	poll := time.Millisecond
+	const poll = time.Millisecond
 	inSpike := false
+
+	timer := newStoppedTimer()
+	defer timer.Stop()
 
 	for {
 		select {
@@ -264,12 +290,8 @@ func runSpike(ctx context.Context, phase Phase, scenario func(context.Context) e
 			if err := scenario(ctx); err != nil {
 				return err
 			}
-		} else {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(poll):
-			}
+		} else if err := pollWait(ctx, timer, poll); err != nil {
+			return err
 		}
 	}
 }

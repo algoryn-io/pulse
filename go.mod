@@ -1,6 +1,6 @@
 module algoryn.io/pulse
 
-go 1.26.3
+go 1.26.4
 
 require (
 	algoryn.io/fabric v0.2.0

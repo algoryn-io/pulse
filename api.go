@@ -129,10 +129,18 @@ type ReportingConfig struct {
 }
 
 // Config holds execution configuration for a test.
+// Config holds execution configuration for a test.
 type Config struct {
 	Phases         []Phase
 	MaxConcurrency int
-	Seed           *int64
+	// Seed pins the random source used by built-in middlewares (WithErrorRate,
+	// WithJitter, WithLatency, WithStatusCode) so that injected-fault patterns
+	// are reproducible across runs. Two runs with the same Seed, the same
+	// Config, and the same scenario execution order produce identical fault
+	// patterns. OS scheduling variation means exact replay is best-effort.
+	// Seed is applied only when SetSeed has not already been called; set it
+	// to nil to leave the random source unseeded (the default).
+	Seed *int64
 	// SaturationPolicy defaults to SaturationPolicyDrop.
 	SaturationPolicy SaturationPolicy
 	Thresholds       Thresholds
@@ -224,6 +232,9 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 	if err := validateTest(test); err != nil {
 		return Result{}, err
 	}
+	// Apply the seed only when the caller has not already called SetSeed
+	// directly, preventing double-seeding when running multiple tests in the
+	// same process.
 	if test.Config.Seed != nil && !hasSeed() {
 		SetSeed(*test.Config.Seed)
 	}
@@ -285,36 +296,37 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 	return result, threshErr
 }
 
-func validateTest(test Test) error {
-	if len(test.Config.Phases) == 0 {
+// ValidateConfig validates the Config fields of a Test: phases, saturation
+// policy, concurrency limits, reporting interval, and thresholds. It is called
+// by validateTest and is also available to external packages (such as
+// config.Load) that build a pulse.Config from another representation and want
+// early error reporting before constructing a full Test.
+func ValidateConfig(cfg Config) error {
+	if len(cfg.Phases) == 0 {
 		return errNoPhases
 	}
 
-	if test.Scenario == nil {
-		return errNilScenario
-	}
-
-	if policy := test.Config.SaturationPolicy; policy != "" &&
+	if policy := cfg.SaturationPolicy; policy != "" &&
 		policy != SaturationPolicyDrop && policy != SaturationPolicyBlock {
 		return errUnsupportedSaturation
 	}
 
-	if test.Config.MaxConcurrency < 0 {
+	if cfg.MaxConcurrency < 0 {
 		return errNegativeMaxConcurrency
 	}
-	if test.Config.MaxConcurrency > maxConcurrency {
+	if cfg.MaxConcurrency > maxConcurrency {
 		return errMaxConcurrencyTooHigh
 	}
 
-	if test.Config.Reporting.Interval < 0 {
+	if cfg.Reporting.Interval < 0 {
 		return errNegativeReportInterval
 	}
-	if test.Config.Reporting.Interval > 0 && test.Config.Reporting.Interval < minReportingInterval {
+	if cfg.Reporting.Interval > 0 && cfg.Reporting.Interval < minReportingInterval {
 		return errReportIntervalTooSmall
 	}
 
 	var totalDuration time.Duration
-	for _, phase := range test.Config.Phases {
+	for _, phase := range cfg.Phases {
 		if phase.Duration <= 0 {
 			return errNonPositivePhase
 		}
@@ -322,8 +334,8 @@ func validateTest(test Test) error {
 			return errTooManySnapshots
 		}
 		totalDuration += phase.Duration
-		if test.Config.Reporting.Interval > 0 &&
-			(totalDuration-1)/test.Config.Reporting.Interval+1 > maxSnapshots {
+		if cfg.Reporting.Interval > 0 &&
+			(totalDuration-1)/cfg.Reporting.Interval+1 > maxSnapshots {
 			return errTooManySnapshots
 		}
 
@@ -355,34 +367,39 @@ func validateTest(test Test) error {
 			return errUnsupportedPhaseType
 		}
 	}
-	if test.Config.Thresholds.ErrorRate < 0 {
+
+	if cfg.Thresholds.ErrorRate < 0 {
 		return errNegativeErrorRate
 	}
-
-	if test.Config.Thresholds.ErrorRate > 1 {
+	if cfg.Thresholds.ErrorRate > 1 {
 		return errErrorRateAboveOne
 	}
-
-	if test.Config.Thresholds.MaxMeanLatency < 0 {
+	if cfg.Thresholds.MaxMeanLatency < 0 {
 		return errNegativeMeanLatency
 	}
-
-	if test.Config.Thresholds.MaxP95Latency < 0 {
+	if cfg.Thresholds.MaxP95Latency < 0 {
 		return errNegativeP95Latency
 	}
-
-	if test.Config.Thresholds.MaxP99Latency < 0 {
+	if cfg.Thresholds.MaxP99Latency < 0 {
 		return errNegativeP99Latency
 	}
-
-	if test.Config.Thresholds.MaxDroppedRate < 0 {
+	if cfg.Thresholds.MaxDroppedRate < 0 {
 		return errNegativeDroppedRate
 	}
-
-	if test.Config.Thresholds.MaxDroppedRate > 1 {
+	if cfg.Thresholds.MaxDroppedRate > 1 {
 		return errDroppedRateAboveOne
 	}
 
+	return nil
+}
+
+func validateTest(test Test) error {
+	if err := ValidateConfig(test.Config); err != nil {
+		return err
+	}
+	if test.Scenario == nil {
+		return errNilScenario
+	}
 	return nil
 }
 

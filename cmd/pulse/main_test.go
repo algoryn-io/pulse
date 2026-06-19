@@ -58,6 +58,26 @@ func TestRunReturnsUsageForInvalidArgs(t *testing.T) {
 	}
 }
 
+func TestRunReturnsUsageWhenNoConfigProvided(t *testing.T) {
+	// "pulse run" without a config path must return a usage error instead of
+	// silently running against a hardcoded fallback target.
+	previousExecute := execute
+	t.Cleanup(func() { execute = previousExecute })
+	execute = runTest // use the real implementation, not a stub
+
+	var stdout bytes.Buffer
+	err := run([]string{"run"}, &stdout)
+	if err != errUsage {
+		t.Fatalf("expected errUsage, got %v", err)
+	}
+	if exitCode(err) != 1 {
+		t.Fatalf("exitCode = %d, want 1", exitCode(err))
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no output, got %q", stdout.String())
+	}
+}
+
 func TestRunPrintsResults(t *testing.T) {
 	previousExecute := execute
 	t.Cleanup(func() {
@@ -726,6 +746,164 @@ func TestRunPrintsThresholdFailureJSON(t *testing.T) {
 	}
 	if got.Thresholds[0].Description != "error_rate < 0.1" || got.Thresholds[0].Pass {
 		t.Fatalf("expected failed threshold mapping, got %+v", got.Thresholds)
+	}
+}
+
+func TestDryRunRequiresConfigFile(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"run", "--dry-run"}, &stdout)
+	if err == nil {
+		t.Fatal("expected error when --dry-run has no config file")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no output, got %q", stdout.String())
+	}
+}
+
+func TestDryRunPrintsPhasesSummaryAndExitsClean(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	content := "" +
+		"phases:\n" +
+		"  - type: constant\n" +
+		"    duration: 5s\n" +
+		"    arrivalRate: 10\n" +
+		"  - type: ramp\n" +
+		"    duration: 10s\n" +
+		"    from: 10\n" +
+		"    to: 50\n" +
+		"target:\n" +
+		"  method: GET\n" +
+		"  url: https://pulse.test\n" +
+		"maxConcurrency: 20\n" +
+		"thresholds:\n" +
+		"  errorRate: 0.05\n" +
+		"  maxP95Latency: 300ms\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	if err := run([]string{"run", "--dry-run", path}, &stdout); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	out := stdout.String()
+
+	// Banner present
+	if !strings.Contains(out, "Pulse (dry run)") {
+		t.Errorf("expected banner, got %q", out)
+	}
+	// Phase summary
+	if !strings.Contains(out, "Phases (2):") {
+		t.Errorf("expected phase count, got %q", out)
+	}
+	if !strings.Contains(out, "constant  10 rps  5s") {
+		t.Errorf("expected constant phase, got %q", out)
+	}
+	if !strings.Contains(out, "ramp      10→50 rps  10s") {
+		t.Errorf("expected ramp phase, got %q", out)
+	}
+	// Total duration
+	if !strings.Contains(out, "Total duration: 15s") {
+		t.Errorf("expected total duration, got %q", out)
+	}
+	// Operational params
+	if !strings.Contains(out, "MaxConcurrency: 20") {
+		t.Errorf("expected MaxConcurrency, got %q", out)
+	}
+	// Thresholds
+	if !strings.Contains(out, "error_rate < 0.05") {
+		t.Errorf("expected error_rate threshold, got %q", out)
+	}
+	if !strings.Contains(out, "p95_latency < 300ms") {
+		t.Errorf("expected p95_latency threshold, got %q", out)
+	}
+	// Success line
+	if !strings.Contains(out, "✔ Config is valid. No traffic will be sent.") {
+		t.Errorf("expected success line, got %q", out)
+	}
+}
+
+func TestDryRunQuietMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	content := "" +
+		"phases:\n" +
+		"  - type: constant\n" +
+		"    duration: 3s\n" +
+		"    arrivalRate: 5\n" +
+		"target:\n" +
+		"  method: GET\n" +
+		"  url: https://pulse.test\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	if err := run([]string{"run", "--dry-run", "--quiet", path}, &stdout); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	out := stdout.String()
+
+	// Banner suppressed in quiet mode
+	if strings.Contains(out, "Pulse (dry run)") {
+		t.Errorf("expected no banner in quiet mode, got %q", out)
+	}
+	// Core phase info still present
+	if !strings.Contains(out, "Phases (1):") {
+		t.Errorf("expected phase count, got %q", out)
+	}
+	if !strings.Contains(out, "✔ Config is valid.") {
+		t.Errorf("expected success line, got %q", out)
+	}
+}
+
+func TestDryRunRejectsInvalidConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.yaml")
+	// Missing phases
+	content := "target:\n  method: GET\n  url: https://pulse.test\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	err := run([]string{"run", "--dry-run", path}, &stdout)
+	if err == nil {
+		t.Fatal("expected validation error for config with no phases")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no output on validation failure, got %q", stdout.String())
+	}
+}
+
+func TestDryRunPrintsStepPhase(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	content := "" +
+		"phases:\n" +
+		"  - type: step\n" +
+		"    duration: 20s\n" +
+		"    from: 5\n" +
+		"    to: 25\n" +
+		"    steps: 5\n" +
+		"target:\n" +
+		"  method: GET\n" +
+		"  url: https://pulse.test\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	if err := run([]string{"run", "--dry-run", path}, &stdout); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "step      5→25 rps  5 steps  20s") {
+		t.Errorf("expected step phase summary, got %q", out)
 	}
 }
 

@@ -86,7 +86,7 @@ func WithJitter(min, max time.Duration, rate float64) Middleware {
 			if randomFloat64() < rate {
 				d := min
 				if max > min {
-					d = min + time.Duration(randomInt63n(int64(max-min)))
+					d = min + time.Duration(randomInt64N(int64(max-min)))
 				}
 
 				timer := time.NewTimer(d)
@@ -135,6 +135,10 @@ func WithStatusCode(code int, rate float64) Middleware {
 
 // WithRetry returns a Middleware that retries a failed scenario
 // up to n times with a fixed backoff between attempts.
+//
+// Retries are skipped immediately when the context is already canceled or
+// expired after a failed attempt, returning the context error. This prevents
+// spurious retries when a deadline fires mid-run.
 func WithRetry(n int, backoff time.Duration) Middleware {
 	if n < 0 {
 		panic("pulse: retry count must not be negative")
@@ -151,11 +155,17 @@ func WithRetry(n int, backoff time.Duration) Middleware {
 				if err == nil {
 					return status, nil
 				}
+				// Do not retry when the context has been canceled or exceeded its
+				// deadline — the error is not transient and further attempts will
+				// fail immediately with the same context state.
+				if ctx.Err() != nil {
+					return status, ctx.Err()
+				}
 				if i < n {
 					timer := time.NewTimer(backoff)
 					select {
 					case <-timer.C:
-						timer.Stop()
+						// timer fired; continue to next attempt
 					case <-ctx.Done():
 						timer.Stop()
 						return 0, ctx.Err()

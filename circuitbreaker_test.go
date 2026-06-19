@@ -167,6 +167,73 @@ func TestCircuitBreakerWindowResetsAfterWindowDuration(t *testing.T) {
 	}
 }
 
+func TestCircuitBreakerHalfOpenLimitsToOneProbe(t *testing.T) {
+	// While a probe is in flight, concurrent callers must be rejected.
+	cb := newCircuitBreaker(0.5, 10*time.Second, 100*time.Millisecond)
+	now := time.Now()
+
+	cb.mu.Lock()
+	cb.state = cbHalfOpen
+	cb.probeInFlight = false // no probe yet
+
+	// First call: probe slot is free — should be allowed.
+	first := cb.allow(now)
+	// Second call: probe is now in flight — must be rejected.
+	second := cb.allow(now)
+	probeInFlight := cb.probeInFlight
+	cb.mu.Unlock()
+
+	if !first {
+		t.Fatal("expected first allow to permit the probe")
+	}
+	if second {
+		t.Fatal("expected second allow to reject while probe is in flight")
+	}
+	if !probeInFlight {
+		t.Fatal("expected probeInFlight to be true while probe is executing")
+	}
+}
+
+func TestCircuitBreakerHalfOpenProbeSlotReleasedOnSuccess(t *testing.T) {
+	cb := newCircuitBreaker(0.5, 10*time.Second, time.Second)
+	now := time.Now()
+
+	cb.mu.Lock()
+	cb.state = cbHalfOpen
+	cb.probeInFlight = true
+	cb.record(true, now) // probe succeeds → circuit closes
+	probeInFlight := cb.probeInFlight
+	state := cb.state
+	cb.mu.Unlock()
+
+	if state != cbClosed {
+		t.Fatalf("expected closed state after successful probe, got %v", state)
+	}
+	if probeInFlight {
+		t.Fatal("expected probeInFlight to be false after probe completes")
+	}
+}
+
+func TestCircuitBreakerHalfOpenProbeSlotReleasedOnFailure(t *testing.T) {
+	cb := newCircuitBreaker(0.5, 10*time.Second, time.Second)
+	now := time.Now()
+
+	cb.mu.Lock()
+	cb.state = cbHalfOpen
+	cb.probeInFlight = true
+	cb.record(false, now) // probe fails → circuit re-opens
+	probeInFlight := cb.probeInFlight
+	state := cb.state
+	cb.mu.Unlock()
+
+	if state != cbOpen {
+		t.Fatalf("expected open state after failed probe, got %v", state)
+	}
+	if probeInFlight {
+		t.Fatal("expected probeInFlight to be false after probe completes")
+	}
+}
+
 func TestWithCircuitBreakerIntegratesWithRunT(t *testing.T) {
 	baseScenario := newHealthyHTTPScenario(t)
 
