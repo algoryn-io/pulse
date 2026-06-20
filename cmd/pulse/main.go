@@ -1,21 +1,26 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
 	pulse "algoryn.io/pulse"
 	"algoryn.io/pulse/config"
+	"algoryn.io/pulse/distributed/worker"
 )
 
-const usageMessage = "usage: pulse run <config.yaml> [--format text|json] [--quiet] [--dry-run] [--seed <n>] [--out <file>] [--junit <file>]\n\nRuns the load test defined in <config.yaml>"
+const usageMessage = "usage: pulse run <config.yaml> [--format text|json] [--quiet] [--dry-run] [--seed <n>] [--out <file>] [--junit <file>] [--workers host:port,...]\n\nRuns the load test defined in <config.yaml>\n\nDistributed mode: pulse worker --addr <host:port>"
 const textBanner = "Pulse"
 const textBannerSubtitle = "Programmable load testing"
 const textStatusPassed = "✔ Test passed"
@@ -32,6 +37,7 @@ type runOptions struct {
 	seed       *int64
 	outFile    string
 	junitFile  string
+	workers    []string // distributed worker addresses
 }
 
 type jsonSummary struct {
@@ -86,6 +92,14 @@ func main() {
 }
 
 func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "worker" {
+		if err := runWorker(args[1:]); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	}
+
 	err := run(args, stdout)
 	if err == nil {
 		return 0
@@ -94,6 +108,31 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 	}
 	return exitCode(err)
+}
+
+// runWorker starts a distributed worker server and blocks until SIGINT/SIGTERM.
+// Usage: pulse worker --addr host:port
+func runWorker(args []string) error {
+	addr := ":9100" // default
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--addr":
+			if i+1 >= len(args) {
+				return fmt.Errorf("usage: pulse worker --addr <host:port>")
+			}
+			addr = args[i+1]
+			i++
+		default:
+			return fmt.Errorf("usage: pulse worker --addr <host:port>")
+		}
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	fmt.Fprintf(os.Stderr, "Pulse worker listening on %s\n", addr)
+	// CLI worker has no pre-registered scenario: it uses HTTPScenario from RunRequest.
+	return worker.New(nil).ListenAndServe(ctx, addr)
 }
 
 // exitCode maps run errors to process exit codes for CI/CD:
@@ -179,7 +218,13 @@ func run(args []string, stdout io.Writer) error {
 
 	progress := newProgressReporter(stdout, options.format)
 	progress.start()
-	result, runErr := execute(executeArgs)
+	var result pulse.Result
+	var runErr error
+	if len(options.workers) > 0 {
+		result, runErr = runTestWithWorkers(executeArgs, options.workers)
+	} else {
+		result, runErr = execute(executeArgs)
+	}
 	progress.stop()
 	showResults := runErr == nil || isThresholdEvaluationFailureOnly(runErr)
 
@@ -226,6 +271,19 @@ func runTest(args []string) (pulse.Result, error) {
 	if err != nil {
 		return pulse.Result{}, err
 	}
+	return pulse.Run(test)
+}
+
+// runTestWithWorkers loads the config and overrides Workers with the CLI flag value.
+func runTestWithWorkers(args []string, workers []string) (pulse.Result, error) {
+	if len(args) != 1 {
+		return pulse.Result{}, errUsage
+	}
+	test, err := config.Load(args[0])
+	if err != nil {
+		return pulse.Result{}, err
+	}
+	test.Config.Workers = workers
 	return pulse.Run(test)
 }
 
@@ -285,6 +343,17 @@ func parseRunArgs(args []string) (runOptions, error) {
 				return runOptions{}, errUsage
 			}
 			options.junitFile = args[i+1]
+			i++
+		case "--workers":
+			if i+1 >= len(args) {
+				return runOptions{}, errUsage
+			}
+			for _, w := range strings.Split(args[i+1], ",") {
+				w = strings.TrimSpace(w)
+				if w != "" {
+					options.workers = append(options.workers, w)
+				}
+			}
 			i++
 		default:
 			if len(args[i]) > 2 && args[i][:2] == "--" {

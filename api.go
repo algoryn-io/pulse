@@ -10,6 +10,9 @@ import (
 
 	fabricv1 "algoryn.io/fabric/gen/go/fabric/v1"
 
+	"algoryn.io/pulse/distributed"
+	"algoryn.io/pulse/distributed/coordinator"
+	"algoryn.io/pulse/distributed/worker"
 	"algoryn.io/pulse/engine"
 	"algoryn.io/pulse/metrics"
 	"algoryn.io/pulse/model"
@@ -146,7 +149,17 @@ type Config struct {
 	Thresholds       Thresholds
 	Reporting        ReportingConfig
 	// Service is optional metadata for Fabric MetricSnapshot.Service and RunCompleted payloads.
-	Service      string
+	Service string
+	// Workers is an optional list of distributed worker addresses ("host:port").
+	// When non-empty, RunContext fans out the test to all workers via HTTP and
+	// merges their results. Workers must be started with ListenAsWorker.
+	// For single-node runs (the default), leave Workers nil or empty.
+	Workers []string
+	// DistributedHTTPScenario, when non-nil, is forwarded to workers in the
+	// RunRequest so CLI workers can build the HTTP scenario from config.
+	// Populated by config.Load() from the YAML target section.
+	// Library users with pre-registered scenarios should leave this nil.
+	DistributedHTTPScenario *HTTPScenarioConfig
 	OnResult     ResultHook     // optional; nil means no-op
 	OnFabricEmit FabricEmitHook // optional; protobuf RunEvent + RunCompleted Event
 }
@@ -220,14 +233,36 @@ type ResultHook func(result Result, passed bool)
 // run carries fabric.v1.MetricSnapshot; completed is EVENT_TYPE_RUN_COMPLETED for tools like Beacon.
 type FabricEmitHook func(run *fabricv1.RunEvent, completed *fabricv1.Event)
 
+// HTTPScenarioConfig holds the HTTP target parameters for distributed workers.
+// When set alongside Config.Workers, the coordinator forwards these to each worker
+// so they can build the HTTP scenario without a local config file.
+// This is populated automatically by config.Load(); library users with custom
+// scenarios (pre-registered in workers via ListenAsWorker) should leave it nil.
+type HTTPScenarioConfig struct {
+	URL     string
+	Method  string
+	Headers map[string]string
+	Body    string
+}
+
 // Run validates the test definition and executes it through the engine.
 // Use RunContext when the caller needs cancellation or a global timeout.
 func Run(test Test) (Result, error) {
 	return RunContext(context.Background(), test)
 }
 
+// ListenAsWorker starts a distributed worker server on addr that accepts
+// RunRequests from a coordinator and executes scenario at the directed rate.
+// It blocks until ctx is cancelled. Use in library mode alongside RunContext
+// with Config.Workers set on the coordinator side.
+func ListenAsWorker(ctx context.Context, addr string, scenario Scenario) error {
+	return worker.New(scenario).ListenAndServe(ctx, addr)
+}
+
 // RunContext validates the test definition and executes it through the engine.
 // The context controls scheduling and in-flight scenario executions.
+// When test.Config.Workers is non-empty, the run is distributed across those
+// workers; otherwise it executes locally.
 func RunContext(ctx context.Context, test Test) (Result, error) {
 	if err := validateTest(test); err != nil {
 		return Result{}, err
@@ -237,6 +272,10 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 	// same process.
 	if test.Config.Seed != nil && !hasSeed() {
 		SetSeed(*test.Config.Seed)
+	}
+
+	if len(test.Config.Workers) > 0 {
+		return runDistributed(ctx, test)
 	}
 
 	execution := engine.NewWithOptions(
@@ -251,30 +290,7 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 
 	startedAt := time.Now()
 	metricsResult, err := execution.Run(ctx)
-	result := Result{
-		Total:        metricsResult.Total,
-		Failed:       metricsResult.Failed,
-		Duration:     metricsResult.Duration,
-		RPS:          metricsResult.RPS,
-		Scheduled:    metricsResult.Scheduled,
-		Started:      metricsResult.Started,
-		Dropped:      metricsResult.Dropped,
-		DroppedRate:  metricsResult.DroppedRate,
-		Completed:    metricsResult.Completed,
-		MaxActive:    metricsResult.MaxActive,
-		StatusCounts: metricsResult.StatusCounts,
-		ErrorCounts:  metricsResult.ErrorCounts,
-		Snapshots:    toSnapshots(metricsResult.Snapshots),
-		Latency: LatencyStats{
-			Min:  metricsResult.Latency.Min,
-			Mean: metricsResult.Latency.Mean,
-			P50:  metricsResult.Latency.P50,
-			P90:  metricsResult.Latency.P90,
-			P95:  metricsResult.Latency.P95,
-			P99:  metricsResult.Latency.P99,
-			Max:  metricsResult.Latency.Max,
-		},
-	}
+	result := metricsResultToResult(metricsResult)
 
 	outcomes, threshErr := evaluateThresholds(test.Config.Thresholds, result)
 	result.ThresholdOutcomes = outcomes
@@ -530,6 +546,95 @@ func evaluateThresholds(thresholds Thresholds, result Result) ([]ThresholdOutcom
 	}
 
 	return outcomes, errors.Join(errs...)
+}
+
+// runDistributed fans out the test to the workers in test.Config.Workers and
+// merges their results. It does not execute any scenario locally.
+func runDistributed(ctx context.Context, test Test) (Result, error) {
+	c := coordinator.New(test.Config.Workers)
+
+	req := distributed.RunRequest{
+		Phases:           toDistributedPhases(test.Config.Phases),
+		MaxConcurrency:   test.Config.MaxConcurrency,
+		SaturationPolicy: string(normalizedSaturationPolicy(test.Config.SaturationPolicy)),
+		HTTPScenario:     toDistributedHTTPScenario(test.Config.DistributedHTTPScenario),
+	}
+
+	startedAt := time.Now()
+	metricsResult, err := c.Run(ctx, req)
+
+	result := metricsResultToResult(metricsResult)
+	outcomes, threshErr := evaluateThresholds(test.Config.Thresholds, result)
+	result.ThresholdOutcomes = outcomes
+
+	passed := err == nil && threshErr == nil
+	if test.Config.OnFabricEmit != nil {
+		emit := ToFabricRunEmit(test.Config.Service, result, passed, startedAt)
+		test.Config.OnFabricEmit(emit.RunEvent, emit.RunCompleted)
+	}
+	if test.Config.OnResult != nil {
+		test.Config.OnResult(result, passed)
+	}
+	if err != nil {
+		return result, errors.Join(err, threshErr)
+	}
+	return result, threshErr
+}
+
+func toDistributedHTTPScenario(cfg *HTTPScenarioConfig) *distributed.HTTPScenario {
+	if cfg == nil {
+		return nil
+	}
+	return &distributed.HTTPScenario{
+		URL:     cfg.URL,
+		Method:  cfg.Method,
+		Headers: cfg.Headers,
+		Body:    cfg.Body,
+	}
+}
+
+func toDistributedPhases(phases []Phase) []distributed.Phase {
+	out := make([]distributed.Phase, len(phases))
+	for i, p := range phases {
+		out[i] = distributed.Phase{
+			Type:          string(p.Type),
+			Duration:      p.Duration,
+			ArrivalRate:   p.ArrivalRate,
+			From:          p.From,
+			To:            p.To,
+			Steps:         p.Steps,
+			SpikeAt:       p.SpikeAt,
+			SpikeDuration: p.SpikeDuration,
+		}
+	}
+	return out
+}
+
+func metricsResultToResult(m metrics.Result) Result {
+	return Result{
+		Total:        m.Total,
+		Failed:       m.Failed,
+		Duration:     m.Duration,
+		RPS:          m.RPS,
+		Scheduled:    m.Scheduled,
+		Started:      m.Started,
+		Dropped:      m.Dropped,
+		DroppedRate:  m.DroppedRate,
+		Completed:    m.Completed,
+		MaxActive:    m.MaxActive,
+		StatusCounts: m.StatusCounts,
+		ErrorCounts:  m.ErrorCounts,
+		Snapshots:    toSnapshots(m.Snapshots),
+		Latency: LatencyStats{
+			Min:  m.Latency.Min,
+			Mean: m.Latency.Mean,
+			P50:  m.Latency.P50,
+			P90:  m.Latency.P90,
+			P95:  m.Latency.P95,
+			P99:  m.Latency.P99,
+			Max:  m.Latency.Max,
+		},
+	}
 }
 
 func toSchedulerPhases(phases []Phase) []scheduler.Phase {

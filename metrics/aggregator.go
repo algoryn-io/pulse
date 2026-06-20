@@ -8,6 +8,10 @@ import (
 	"algoryn.io/pulse/internal/stats"
 )
 
+// NumBuckets is re-exported from internal/stats so callers in the distributed
+// layer can size bucket arrays without importing internal/stats directly.
+const NumBuckets = stats.NumBuckets
+
 // Result contains the aggregated execution metrics for a run.
 type Result struct {
 	Total        int64
@@ -24,6 +28,11 @@ type Result struct {
 	StatusCounts map[int]int64
 	ErrorCounts  map[string]int64
 	Snapshots    []Snapshot
+	// Buckets contains the raw histogram bucket counts (stats.NumBuckets = 800 values).
+	// Populated by Aggregator.Result() for use by distributed coordinators that need
+	// to merge per-worker histograms before computing cross-worker percentiles.
+	// Callers that only need latency percentiles can ignore this field.
+	Buckets []uint64
 }
 
 // Snapshot contains metrics observed during one reporting interval.
@@ -133,6 +142,7 @@ func (a *Aggregator) Result(duration time.Duration) Result {
 
 	result.StatusCounts = copyInt64MapByInt(a.statusCounts)
 	result.ErrorCounts = copyInt64MapByString(a.errorCounts)
+	result.Buckets = a.engine.ExportBuckets()
 
 	return result
 }

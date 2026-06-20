@@ -11,12 +11,20 @@ package stats
 // double pulse_stats_engine_get_percentile(void* p, double percent);
 // void pulse_stats_engine_reset(void* p);
 // unsigned long long pulse_stats_engine_total(void* p);
+// int pulse_stats_engine_num_buckets(void);
+// void pulse_stats_engine_export_buckets(void* p, unsigned long long* out, int n);
+// void pulse_stats_engine_import_buckets(void* p, const unsigned long long* in, int n);
 import "C"
 
 import (
 	"sync"
 	"unsafe"
 )
+
+// NumBuckets is the number of histogram buckets in the stats engine (800).
+// This constant mirrors StatsEngine::kNumBuckets and is used by distributed
+// workers and the coordinator to size the bucket transfer arrays.
+const NumBuckets = 800
 
 // Engine is a thread-safe view of the C++ logarithmic-histogram engine (1 µs to 60 s, ~3
 // significant figures in log10 binning). All methods are safe for concurrent use.
@@ -73,6 +81,44 @@ func (e *Engine) Total() uint64 {
 		return 0
 	}
 	return uint64(C.pulse_stats_engine_total(e.handle))
+}
+
+// ExportBuckets returns a snapshot of the engine's 800 histogram bucket counts.
+// The returned slice has length NumBuckets. Safe to call concurrently.
+// Used by distributed workers to ship histogram state to the coordinator.
+func (e *Engine) ExportBuckets() []uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]uint64, NumBuckets)
+	if e.closed || e.handle == nil {
+		return out
+	}
+	C.pulse_stats_engine_export_buckets(
+		e.handle,
+		(*C.ulonglong)(unsafe.Pointer(&out[0])),
+		C.int(NumBuckets),
+	)
+	return out
+}
+
+// ImportBuckets merges the provided bucket counts into this engine by summing
+// each bucket and updating total_. buckets must have length NumBuckets; a
+// mismatched length is silently ignored. Safe to call concurrently.
+// Used by the coordinator to merge histograms from multiple workers.
+func (e *Engine) ImportBuckets(buckets []uint64) {
+	if len(buckets) != NumBuckets {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed || e.handle == nil {
+		return
+	}
+	C.pulse_stats_engine_import_buckets(
+		e.handle,
+		(*C.ulonglong)(unsafe.Pointer(&buckets[0])),
+		C.int(NumBuckets),
+	)
 }
 
 // Close releases native resources. Safe to call more than once.

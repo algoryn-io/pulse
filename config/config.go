@@ -41,6 +41,10 @@ type fileConfig struct {
 	Thresholds       thresholdsConfig `yaml:"thresholds"`
 	Reporting        reportingConfig  `yaml:"reporting"`
 	Seed             *int64           `yaml:"seed"`
+	// Workers is an optional list of distributed worker addresses ("host:port").
+	// When set, `pulse run` fans out the load test to these workers instead of
+	// executing locally. Workers must be running `pulse worker --addr <addr>`.
+	Workers []string `yaml:"workers"`
 }
 
 type phaseConfig struct {
@@ -151,6 +155,16 @@ func Load(path string) (pulse.Test, error) {
 		},
 		Reporting: pulse.ReportingConfig{
 			Interval: cfg.Reporting.Interval.Duration,
+		},
+		Workers: cfg.Workers,
+		// Always populate DistributedHTTPScenario so that distributed runs
+		// (workers: [...] in YAML or --workers on CLI) can forward the target
+		// to CLI workers that have no pre-registered scenario.
+		DistributedHTTPScenario: &pulse.HTTPScenarioConfig{
+			URL:     cfg.Target.URL,
+			Method:  method,
+			Headers: cfg.Target.Headers,
+			Body:    cfg.Target.Body,
 		},
 	}
 
