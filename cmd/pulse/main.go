@@ -223,6 +223,11 @@ func run(args []string, stdout io.Writer) error {
 	var runErr error
 	if len(options.workers) > 0 {
 		result, runErr = runTestWithWorkers(executeArgs, options.workers, options.dashboardAddr)
+<<<<<<< Updated upstream
+=======
+	} else if options.dashboardAddr != "" {
+		result, runErr = runTestWithDashboard(executeArgs, options.dashboardAddr)
+>>>>>>> Stashed changes
 	} else {
 		result, runErr = runTestWithOptions(executeArgs, options.dashboardAddr)
 	}
@@ -284,6 +289,23 @@ func runTestWithOptions(args []string, dashboardAddr string) (pulse.Result, erro
 		if test.Config.Reporting.Interval == 0 {
 			test.Config.Reporting.Interval = time.Second
 		}
+	}
+	return pulse.Run(test)
+}
+
+// runTestWithDashboard loads the config and starts a live dashboard server.
+// The dashboard auto-enables reporting.interval = 1s when not set in YAML.
+func runTestWithDashboard(args []string, dashboardAddr string) (pulse.Result, error) {
+	if len(args) != 1 {
+		return pulse.Result{}, errUsage
+	}
+	test, err := config.Load(args[0])
+	if err != nil {
+		return pulse.Result{}, err
+	}
+	test.Config.DashboardAddr = dashboardAddr
+	if test.Config.Reporting.Interval == 0 {
+		test.Config.Reporting.Interval = time.Second
 	}
 	return pulse.Run(test)
 }
