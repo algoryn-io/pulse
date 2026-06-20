@@ -42,7 +42,8 @@ Load-fidelity fields (`scheduled`, `started`, `dropped`, `dropped_rate`, `comple
 | **Latency** | **P50, P90, P95, P99** (plus min, mean, max) from the **C++ histogram**; stable under load, bounded memory. |
 | **Configuration** | Strict **YAML** test definitions: target, phases, `maxConcurrency`, saturation policy, and optional **thresholds** (error rate, dropped-arrival rate, mean / P95 / P99 latency). |
 | **Output** | **Text** (human-readable) and **JSON** (automation, CI artifacts); optional interval snapshots expose transient behavior in JSON. Combine `--json` and `--out` to mirror JSON to a file. |
-| **API** | Use **`pulse.Run`** or cancelable **`pulse.RunContext`**, `OnResult` hooks, optional **`OnFabricEmit`** for **Fabric protobuf** (`RunEvent` + `RunCompleted` event), and **middleware** for chaos-style scenarios; **`RunT`** for `go test` integration. |
+| **Live dashboard** | Stream metrics to a browser via SSE with `--dashboard :9090`. Displays live RPS, latency percentile charts, and error rate as the run progresses. Shuts down automatically when the run completes. |
+| **API** | Use **`pulse.Run`** or cancelable **`pulse.RunContext`**, `OnResult` hooks, `OnSnapshot` for per-interval callbacks, optional **`OnFabricEmit`** for **Fabric protobuf** (`RunEvent` + `RunCompleted` event), and **middleware** for chaos-style scenarios; **`RunT`** for `go test` integration. |
 | **Tooling** | Optional **`mockserver`** for local demos; see [`examples/`](examples/). |
 
 ---
@@ -131,6 +132,23 @@ thresholds:
 ```
 
 Run against a live target or, for a quick check, start the bundled mock in another terminal and point the URL at it. More examples live under [`examples/`](examples/).
+
+### Live dashboard
+
+Add `--dashboard :9090` to any `pulse run` command to open a streaming metrics dashboard in your browser while the test runs:
+
+```sh
+pulse run config.yaml --dashboard :9090
+# Dashboard: http://localhost:9090
+```
+
+The dashboard streams per-interval data via SSE and shows:
+- Throughput (RPS) over time
+- Latency percentiles (P50 / P95 / P99) over time
+- Error and drop rate over time
+- Current latency breakdown (min / P50 / P90 / P95 / P99 / max)
+
+The page reconnects automatically if the connection drops and shows a "Run complete" banner when the test finishes. The dashboard also works from the Go API via `Config.DashboardAddr` and `Config.OnSnapshot` (for custom per-interval callbacks).
 
 **Mockserver modes**
 

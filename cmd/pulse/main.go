@@ -20,7 +20,7 @@ import (
 	"algoryn.io/pulse/distributed/worker"
 )
 
-const usageMessage = "usage: pulse run <config.yaml> [--format text|json] [--quiet] [--dry-run] [--seed <n>] [--out <file>] [--junit <file>] [--workers host:port,...]\n\nRuns the load test defined in <config.yaml>\n\nDistributed mode: pulse worker --addr <host:port>"
+const usageMessage = "usage: pulse run <config.yaml> [--format text|json] [--quiet] [--dry-run] [--seed <n>] [--out <file>] [--junit <file>] [--workers host:port,...] [--dashboard :port]\n\nRuns the load test defined in <config.yaml>\n\nDistributed mode: pulse worker --addr <host:port>"
 const textBanner = "Pulse"
 const textBannerSubtitle = "Programmable load testing"
 const textStatusPassed = "✔ Test passed"
@@ -30,14 +30,15 @@ var errUsage = fmt.Errorf(usageMessage)
 var execute = runTest
 
 type runOptions struct {
-	configPath string
-	format     string
-	quiet      bool
-	dryRun     bool
-	seed       *int64
-	outFile    string
-	junitFile  string
-	workers    []string // distributed worker addresses
+	configPath    string
+	format        string
+	quiet         bool
+	dryRun        bool
+	seed          *int64
+	outFile       string
+	junitFile     string
+	workers       []string // distributed worker addresses
+	dashboardAddr string   // live dashboard address (e.g. ":9090")
 }
 
 type jsonSummary struct {
@@ -221,9 +222,9 @@ func run(args []string, stdout io.Writer) error {
 	var result pulse.Result
 	var runErr error
 	if len(options.workers) > 0 {
-		result, runErr = runTestWithWorkers(executeArgs, options.workers)
+		result, runErr = runTestWithWorkers(executeArgs, options.workers, options.dashboardAddr)
 	} else {
-		result, runErr = execute(executeArgs)
+		result, runErr = runTestWithOptions(executeArgs, options.dashboardAddr)
 	}
 	progress.stop()
 	showResults := runErr == nil || isThresholdEvaluationFailureOnly(runErr)
@@ -264,6 +265,11 @@ func writeBanner(w io.Writer) {
 }
 
 func runTest(args []string) (pulse.Result, error) {
+	return runTestWithOptions(args, "")
+}
+
+// runTestWithOptions loads the config and applies CLI overrides.
+func runTestWithOptions(args []string, dashboardAddr string) (pulse.Result, error) {
 	if len(args) != 1 {
 		return pulse.Result{}, errUsage
 	}
@@ -271,11 +277,19 @@ func runTest(args []string) (pulse.Result, error) {
 	if err != nil {
 		return pulse.Result{}, err
 	}
+	if dashboardAddr != "" {
+		test.Config.DashboardAddr = dashboardAddr
+		// Dashboard requires interval snapshots to stream live data.
+		// Default to 1s if not set in YAML.
+		if test.Config.Reporting.Interval == 0 {
+			test.Config.Reporting.Interval = time.Second
+		}
+	}
 	return pulse.Run(test)
 }
 
 // runTestWithWorkers loads the config and overrides Workers with the CLI flag value.
-func runTestWithWorkers(args []string, workers []string) (pulse.Result, error) {
+func runTestWithWorkers(args []string, workers []string, dashboardAddr string) (pulse.Result, error) {
 	if len(args) != 1 {
 		return pulse.Result{}, errUsage
 	}
@@ -284,6 +298,12 @@ func runTestWithWorkers(args []string, workers []string) (pulse.Result, error) {
 		return pulse.Result{}, err
 	}
 	test.Config.Workers = workers
+	if dashboardAddr != "" {
+		test.Config.DashboardAddr = dashboardAddr
+		if test.Config.Reporting.Interval == 0 {
+			test.Config.Reporting.Interval = time.Second
+		}
+	}
 	return pulse.Run(test)
 }
 
@@ -354,6 +374,12 @@ func parseRunArgs(args []string) (runOptions, error) {
 					options.workers = append(options.workers, w)
 				}
 			}
+			i++
+		case "--dashboard":
+			if i+1 >= len(args) {
+				return runOptions{}, errUsage
+			}
+			options.dashboardAddr = args[i+1]
 			i++
 		default:
 			if len(args[i]) > 2 && args[i][:2] == "--" {

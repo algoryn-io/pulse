@@ -25,11 +25,12 @@ const (
 
 // Engine executes a test definition.
 type Engine struct {
-	phases         []scheduler.Phase
-	scenario       func(context.Context) (int, error)
-	maxConcurrency int
-	saturation     SaturationPolicy
-	reportInterval time.Duration
+	phases          []scheduler.Phase
+	scenario        func(context.Context) (int, error)
+	maxConcurrency  int
+	saturation      SaturationPolicy
+	reportInterval  time.Duration
+	onLiveSnapshot  func(metrics.Snapshot)
 }
 
 // Options contains execution settings for Engine.
@@ -37,6 +38,11 @@ type Options struct {
 	MaxConcurrency int
 	Saturation     SaturationPolicy
 	ReportInterval time.Duration
+	// OnLiveSnapshot, when non-nil, is called at the end of each reporting
+	// interval with the metrics observed during that window. It is invoked
+	// from a background goroutine and must not block. Only active when
+	// ReportInterval > 0.
+	OnLiveSnapshot func(metrics.Snapshot)
 }
 
 // New creates an engine for the given execution inputs.
@@ -67,6 +73,7 @@ func NewWithOptions(phases []scheduler.Phase, scenario func(context.Context) (in
 		maxConcurrency: options.MaxConcurrency,
 		saturation:     options.Saturation,
 		reportInterval: options.ReportInterval,
+		onLiveSnapshot: options.OnLiveSnapshot,
 	}
 }
 
@@ -124,6 +131,29 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 		}()
 
 		return nil
+	}
+
+	// Start a background goroutine that emits live snapshots at each reporting
+	// interval. This lets callers (e.g. a dashboard server) observe metrics as
+	// the run progresses without waiting for completion.
+	if e.onLiveSnapshot != nil && e.reportInterval > 0 {
+		liveCtx, liveCancel := context.WithCancel(ctx)
+		defer liveCancel()
+		go func() {
+			ticker := time.NewTicker(e.reportInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-liveCtx.Done():
+					return
+				case t := <-ticker.C:
+					snap := snapshots.liveSnapshot(t)
+					if snap.Duration > 0 {
+						e.onLiveSnapshot(snap)
+					}
+				}
+			}
+		}()
 	}
 
 	for _, phase := range e.phases {

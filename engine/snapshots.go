@@ -126,6 +126,53 @@ func (c *snapshotCollector) snapshots(duration time.Duration) []metrics.Snapshot
 	return result
 }
 
+// liveSnapshot returns the most recently completed interval window as a
+// Snapshot. It is safe to call concurrently with record* methods. If no
+// completed window exists yet (the run has been active for less than one
+// interval), it returns a zero-value Snapshot.
+func (c *snapshotCollector) liveSnapshot(now time.Time) metrics.Snapshot {
+	if c == nil {
+		return metrics.Snapshot{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Current (possibly incomplete) window index.
+	currentIdx := int64(now.Sub(c.startedAt) / c.interval)
+	if currentIdx == 0 {
+		return metrics.Snapshot{} // first window not yet complete
+	}
+	lastIdx := currentIdx - 1
+
+	window := c.windows[lastIdx]
+	if window == nil {
+		return metrics.Snapshot{}
+	}
+
+	snap := metrics.Snapshot{
+		StartedAt:   c.startedAt.Add(time.Duration(lastIdx) * c.interval),
+		Duration:    c.interval,
+		Scheduled:   window.scheduled,
+		Started:     window.started,
+		Dropped:     window.dropped,
+		MaxActive:   window.maxActive,
+	}
+	if snap.Scheduled > 0 {
+		snap.DroppedRate = float64(snap.Dropped) / float64(snap.Scheduled)
+	}
+	if window.aggregator != nil {
+		aggregated := window.aggregator.Result(c.interval)
+		snap.Total = aggregated.Total
+		snap.Failed = aggregated.Failed
+		snap.RPS = aggregated.RPS
+		snap.Completed = aggregated.Total
+		snap.Latency = aggregated.Latency
+		snap.StatusCounts = aggregated.StatusCounts
+		snap.ErrorCounts = aggregated.ErrorCounts
+	}
+	return snap
+}
+
 func (c *snapshotCollector) close() {
 	if c == nil {
 		return
