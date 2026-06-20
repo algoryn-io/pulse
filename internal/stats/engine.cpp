@@ -77,6 +77,26 @@ void StatsEngine::Reset() {
   total_ = 0;
 }
 
+void StatsEngine::ExportBuckets(uint64_t* out, int n) const {
+  if (out == nullptr || n != kNumBuckets) {
+    return;
+  }
+  for (int i = 0; i < kNumBuckets; i++) {
+    out[static_cast<std::size_t>(i)] = counts_[static_cast<std::size_t>(i)];
+  }
+}
+
+void StatsEngine::ImportBuckets(const uint64_t* in, int n) {
+  if (in == nullptr || n != kNumBuckets) {
+    return;
+  }
+  for (int i = 0; i < kNumBuckets; i++) {
+    const uint64_t v = in[static_cast<std::size_t>(i)];
+    counts_[static_cast<std::size_t>(i)] += v;
+    total_ += v;
+  }
+}
+
 double StatsEngine::GetPercentile(double p) const {
   if (total_ == 0) {
     return 0.0;
@@ -161,6 +181,30 @@ unsigned long long pulse_stats_engine_total(void* p) {
     return 0U;
   }
   return static_cast<PulseStatsHandle*>(p)->engine->Total();
+}
+
+int pulse_stats_engine_num_buckets(void) {
+  return pulse::stats::StatsEngine::kNumBuckets;
+}
+
+// Copies the kNumBuckets bucket counts into out[0..kNumBuckets-1].
+// out must point to a buffer of at least kNumBuckets unsigned long long values.
+void pulse_stats_engine_export_buckets(void* p, unsigned long long* out, int n) {
+  if (p == nullptr) {
+    return;
+  }
+  static_cast<PulseStatsHandle*>(p)->engine->ExportBuckets(
+      reinterpret_cast<uint64_t*>(out), n);
+}
+
+// Adds counts from in[0..n-1] into the engine's buckets and updates total_.
+// n must equal kNumBuckets; mismatched n is silently ignored.
+void pulse_stats_engine_import_buckets(void* p, const unsigned long long* in, int n) {
+  if (p == nullptr) {
+    return;
+  }
+  static_cast<PulseStatsHandle*>(p)->engine->ImportBuckets(
+      reinterpret_cast<const uint64_t*>(in), n);
 }
 
 }  // extern "C"

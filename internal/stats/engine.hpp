@@ -26,6 +26,14 @@ class StatsEngine {
 
   uint64_t Total() const { return total_; }
 
+  // Copies all kNumBuckets bucket counts into out[0..n-1]. n must equal kNumBuckets.
+  // Used by distributed workers to ship histogram state to the coordinator.
+  void ExportBuckets(uint64_t* out, int n) const;
+
+  // Adds counts from in[0..n-1] into this engine's buckets and updates total_.
+  // n must equal kNumBuckets. Used by the coordinator to merge worker histograms.
+  void ImportBuckets(const uint64_t* in, int n);
+
  private:
   int BucketIndex(int64_t nanos) const;
   // Lower bound of bucket i, i in [0, kNumBuckets); upper bound of last bucket is kMaxLatencyNs.
