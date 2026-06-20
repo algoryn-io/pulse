@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	fabricv1 "algoryn.io/fabric/gen/go/fabric/v1"
 
+	"algoryn.io/pulse/dashboard"
 	"algoryn.io/pulse/distributed"
 	"algoryn.io/pulse/distributed/coordinator"
 	"algoryn.io/pulse/distributed/worker"
@@ -37,11 +39,14 @@ var (
 	errUnsupportedSaturation  = errors.New("pulse: unsupported saturation policy")
 	errNegativeDroppedRate    = errors.New("pulse: threshold dropped rate must not be negative")
 	errDroppedRateAboveOne    = errors.New("pulse: threshold dropped rate must not be greater than 1")
-	errNegativeMaxConcurrency = errors.New("pulse: max concurrency must not be negative")
-	errNegativeReportInterval = errors.New("pulse: reporting interval must not be negative")
-	errReportIntervalTooSmall = errors.New("pulse: reporting interval must be at least 10ms when enabled")
-	errTooManySnapshots       = errors.New("pulse: reporting interval would generate too many snapshots")
-	errMaxConcurrencyTooHigh  = errors.New("pulse: max concurrency must not exceed 1000000")
+	errNegativeMaxConcurrency    = errors.New("pulse: max concurrency must not be negative")
+	errNegativeReportInterval    = errors.New("pulse: reporting interval must not be negative")
+	errReportIntervalTooSmall    = errors.New("pulse: reporting interval must be at least 10ms when enabled")
+	errTooManySnapshots          = errors.New("pulse: reporting interval would generate too many snapshots")
+	errMaxConcurrencyTooHigh     = errors.New("pulse: max concurrency must not exceed 1000000")
+	errAdaptiveRequiresInterval  = errors.New("pulse: Adaptive requires Reporting.Interval > 0")
+	errAdaptiveInvalidErrorRate  = errors.New("pulse: Adaptive.MaxErrorRate must be in [0,1]")
+	errAdaptiveInvalidP99        = errors.New("pulse: Adaptive.MaxP99 must not be negative")
 )
 
 const (
@@ -49,6 +54,12 @@ const (
 	maxSnapshots         = 10_000
 	maxConcurrency       = 1_000_000
 )
+
+// AdaptiveConfig enables real-time RPS auto-tuning for PhaseTypeConstant phases.
+// On each reporting interval the engine adjusts the arrival rate up or down
+// based on observed error rate and P99 latency thresholds.
+// Requires Reporting.Interval > 0.
+type AdaptiveConfig = engine.AdaptiveConfig
 
 // SaturationPolicy controls what happens when all execution slots are in use.
 type SaturationPolicy = engine.SaturationPolicy
@@ -160,8 +171,20 @@ type Config struct {
 	// Populated by config.Load() from the YAML target section.
 	// Library users with pre-registered scenarios should leave this nil.
 	DistributedHTTPScenario *HTTPScenarioConfig
-	OnResult     ResultHook     // optional; nil means no-op
-	OnFabricEmit FabricEmitHook // optional; protobuf RunEvent + RunCompleted Event
+	// DashboardAddr, when non-empty, starts an HTTP dashboard server at the
+	// given address (e.g. ":9090") that streams live metrics via SSE.
+	// Open http://localhost:9090 in a browser while the run is active.
+	DashboardAddr string
+	OnResult      ResultHook     // optional; nil means no-op
+	OnFabricEmit  FabricEmitHook // optional; protobuf RunEvent + RunCompleted Event
+	// OnSnapshot is called at the end of each reporting interval with the
+	// metrics observed during that window. It is invoked from a background
+	// goroutine and must not block. Only active when Reporting.Interval > 0.
+	OnSnapshot func(snapshot Snapshot)
+	// Adaptive, when non-zero, enables real-time RPS auto-tuning for
+	// PhaseTypeConstant phases based on observed error rate and P99 latency.
+	// Requires Reporting.Interval > 0.
+	Adaptive AdaptiveConfig
 }
 
 // Test is the root public input for a Pulse run.
@@ -278,6 +301,35 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 		return runDistributed(ctx, test)
 	}
 
+	// Wire the dashboard server when DashboardAddr is set. The server runs in a
+	// background goroutine and shuts down with the context. Its onSnap/onDone
+	// callbacks are composed with any user-provided OnSnapshot/OnResult hooks.
+	userOnSnapshot := test.Config.OnSnapshot
+	var dashOnDone func(Result, bool)
+	if test.Config.DashboardAddr != "" {
+		dashOnSnap, dashDone := startDashboard(ctx, test.Config.DashboardAddr)
+		dashOnDone = dashDone
+		prevOnSnapshot := userOnSnapshot
+		userOnSnapshot = func(s Snapshot) {
+			dashOnSnap(s)
+			if prevOnSnapshot != nil {
+				prevOnSnapshot(s)
+			}
+		}
+		host := test.Config.DashboardAddr
+		if host[0] == ':' {
+			host = "localhost" + host
+		}
+		fmt.Fprintf(os.Stderr, "Dashboard: http://%s\n", host)
+	}
+
+	var onLiveSnapshot func(metrics.Snapshot)
+	if userOnSnapshot != nil {
+		onLiveSnapshot = func(s metrics.Snapshot) {
+			userOnSnapshot(toSnapshot(s))
+		}
+	}
+
 	execution := engine.NewWithOptions(
 		toSchedulerPhases(test.Config.Phases),
 		test.Scenario,
@@ -285,6 +337,8 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 			MaxConcurrency: test.Config.MaxConcurrency,
 			Saturation:     normalizedSaturationPolicy(test.Config.SaturationPolicy),
 			ReportInterval: test.Config.Reporting.Interval,
+			OnLiveSnapshot: onLiveSnapshot,
+			Adaptive:       test.Config.Adaptive,
 		},
 	)
 
@@ -296,6 +350,11 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 	result.ThresholdOutcomes = outcomes
 
 	passed := err == nil && threshErr == nil
+
+	if dashOnDone != nil {
+		dashOnDone(result, passed)
+	}
+
 	if test.Config.OnFabricEmit != nil {
 		emit := ToFabricRunEmit(test.Config.Service, result, passed, startedAt)
 		test.Config.OnFabricEmit(emit.RunEvent, emit.RunCompleted)
@@ -406,6 +465,18 @@ func ValidateConfig(cfg Config) error {
 		return errDroppedRateAboveOne
 	}
 
+	if !cfg.Adaptive.IsZero() {
+		if cfg.Reporting.Interval == 0 {
+			return errAdaptiveRequiresInterval
+		}
+		if cfg.Adaptive.MaxErrorRate < 0 || cfg.Adaptive.MaxErrorRate > 1 {
+			return errAdaptiveInvalidErrorRate
+		}
+		if cfg.Adaptive.MaxP99 < 0 {
+			return errAdaptiveInvalidP99
+		}
+	}
+
 	return nil
 }
 
@@ -417,6 +488,25 @@ func validateTest(test Test) error {
 		return errNilScenario
 	}
 	return nil
+}
+
+func toSnapshot(s metrics.Snapshot) Snapshot {
+	return Snapshot{
+		StartedAt:    s.StartedAt,
+		Duration:     s.Duration,
+		Total:        s.Total,
+		Failed:       s.Failed,
+		RPS:          s.RPS,
+		Scheduled:    s.Scheduled,
+		Started:      s.Started,
+		Dropped:      s.Dropped,
+		DroppedRate:  s.DroppedRate,
+		Completed:    s.Completed,
+		MaxActive:    s.MaxActive,
+		Latency:      toLatencyStats(s.Latency),
+		StatusCounts: s.StatusCounts,
+		ErrorCounts:  s.ErrorCounts,
+	}
 }
 
 func toSnapshots(snapshots []metrics.Snapshot) []Snapshot {
@@ -653,4 +743,106 @@ func toSchedulerPhases(phases []Phase) []scheduler.Phase {
 	}
 
 	return schedulerPhases
+}
+
+// ── Dashboard integration ─────────────────────────────────────────────────────
+
+// dashboardSnapshotDTO is the JSON-serializable form of a Snapshot emitted to
+// the dashboard SSE stream. Fields use snake_case and durations are in
+// nanoseconds (matching JS expectations: divide by 1e6 to get milliseconds).
+type dashboardSnapshotDTO struct {
+	StartedAt   time.Time `json:"started_at"`
+	DurationNs  int64     `json:"duration_ns"`
+	Total       int64     `json:"total"`
+	Failed      int64     `json:"failed"`
+	RPS         float64   `json:"rps"`
+	Scheduled   int64     `json:"scheduled"`
+	Started     int64     `json:"started"`
+	Dropped     int64     `json:"dropped"`
+	DroppedRate float64   `json:"dropped_rate"`
+	Completed   int64     `json:"completed"`
+	MaxActive   int64     `json:"max_active"`
+	Latency     dashboardLatencyDTO `json:"latency"`
+}
+
+type dashboardLatencyDTO struct {
+	MinNs  int64 `json:"min_ns"`
+	MeanNs int64 `json:"mean_ns"`
+	P50Ns  int64 `json:"p50_ns"`
+	P90Ns  int64 `json:"p90_ns"`
+	P95Ns  int64 `json:"p95_ns"`
+	P99Ns  int64 `json:"p99_ns"`
+	MaxNs  int64 `json:"max_ns"`
+}
+
+type dashboardResultDTO struct {
+	DurationMs  float64             `json:"duration_ms"`
+	Total       int64               `json:"total"`
+	Failed      int64               `json:"failed"`
+	RPS         float64             `json:"rps"`
+	Dropped     int64               `json:"dropped"`
+	DroppedRate float64             `json:"dropped_rate"`
+	Latency     dashboardLatencyDTO `json:"latency"`
+	Passed      bool                `json:"passed"`
+}
+
+func snapshotToDTO(s Snapshot) dashboardSnapshotDTO {
+	return dashboardSnapshotDTO{
+		StartedAt:   s.StartedAt,
+		DurationNs:  int64(s.Duration),
+		Total:       s.Total,
+		Failed:      s.Failed,
+		RPS:         s.RPS,
+		Scheduled:   s.Scheduled,
+		Started:     s.Started,
+		Dropped:     s.Dropped,
+		DroppedRate: s.DroppedRate,
+		Completed:   s.Completed,
+		MaxActive:   s.MaxActive,
+		Latency: dashboardLatencyDTO{
+			MinNs:  int64(s.Latency.Min),
+			MeanNs: int64(s.Latency.Mean),
+			P50Ns:  int64(s.Latency.P50),
+			P90Ns:  int64(s.Latency.P90),
+			P95Ns:  int64(s.Latency.P95),
+			P99Ns:  int64(s.Latency.P99),
+			MaxNs:  int64(s.Latency.Max),
+		},
+	}
+}
+
+func resultToDTO(r Result, passed bool) dashboardResultDTO {
+	return dashboardResultDTO{
+		DurationMs:  float64(r.Duration.Milliseconds()),
+		Total:       r.Total,
+		Failed:      r.Failed,
+		RPS:         r.RPS,
+		Dropped:     r.Dropped,
+		DroppedRate: r.DroppedRate,
+		Passed:      passed,
+		Latency: dashboardLatencyDTO{
+			MinNs:  int64(r.Latency.Min),
+			MeanNs: int64(r.Latency.Mean),
+			P50Ns:  int64(r.Latency.P50),
+			P90Ns:  int64(r.Latency.P90),
+			P95Ns:  int64(r.Latency.P95),
+			P99Ns:  int64(r.Latency.P99),
+			MaxNs:  int64(r.Latency.Max),
+		},
+	}
+}
+
+// startDashboard starts a dashboard server in the background and returns the
+// wired OnSnapshot and completion callbacks. It prints the dashboard URL to
+// stderr so the user knows where to connect.
+func startDashboard(ctx context.Context, addr string) (onSnap func(Snapshot), onDone func(Result, bool)) {
+	srv := dashboard.New()
+	go func() {
+		if err := srv.ListenAndServe(ctx, addr); err != nil {
+			fmt.Fprintf(os.Stderr, "dashboard: %v\n", err)
+		}
+	}()
+	onSnap = func(s Snapshot) { srv.Push(snapshotToDTO(s)) }
+	onDone = func(r Result, passed bool) { srv.Complete(resultToDTO(r, passed), passed) }
+	return
 }

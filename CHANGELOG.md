@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Live dashboard** — `Config.DashboardAddr` (e.g. `":9090"`) or `--dashboard :9090` on the CLI starts an SSE-based HTTP server that streams per-interval metrics to a browser in real time; the page displays RPS, latency percentile, and error-rate charts updated every reporting interval; a "Run complete" banner is shown when the test finishes; the server shuts down when the run context is cancelled; `Config.OnSnapshot func(Snapshot)` exposes the same data to Go callers; `dashboard/` package is embeddable separately via `dashboard.Server`
+- `engine.Options.OnLiveSnapshot func(metrics.Snapshot)` — per-interval callback invoked from a background goroutine at the end of each completed reporting window; enables real-time metric streaming without polling
+
 - `RunContext(ctx, test)` for cancellation and global deadlines
 - Explicit saturation policies: `drop` (default) and legacy-compatible `block`
 - Load-fidelity result fields: scheduled, started, dropped, dropped rate, completed, and maximum active requests

@@ -28,6 +28,9 @@ type Phase struct {
 	Steps         int           // number of discrete steps; only used by PhaseTypeStep
 	SpikeAt       time.Duration // when spike starts (from phase start)
 	SpikeDuration time.Duration // how long the spike lasts
+	// RateFunc, when non-nil, overrides ArrivalRate dynamically on each tick.
+	// Only applied by PhaseTypeConstant; other phase types ignore it.
+	RateFunc func() float64
 }
 
 // Run executes the supported scheduling strategy for a phase.
@@ -108,6 +111,12 @@ func runConstant(ctx context.Context, phase Phase, scenario func(context.Context
 		now := time.Now()
 		if !now.Before(deadline) {
 			return nil
+		}
+
+		if phase.RateFunc != nil {
+			if r := phase.RateFunc(); r > 0 {
+				bucket.SetRefillRate(r, now)
+			}
 		}
 
 		if bucket.Allow(now) {

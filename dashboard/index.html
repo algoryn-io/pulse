@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pulse — Live Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2a2d3a;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --accent: #6366f1;
+      --green: #22c55e;
+      --red: #ef4444;
+      --yellow: #f59e0b;
+      --blue: #3b82f6;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .logo { font-size: 18px; font-weight: 700; letter-spacing: -0.5px; }
+    .logo span { color: var(--accent); }
+
+    #status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+    .dot.running { background: var(--green); animation: pulse 1.5s infinite; }
+    .dot.done    { background: var(--blue); animation: none; }
+    .dot.error   { background: var(--red); animation: none; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+    /* ── stat cards ── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+    }
+
+    .card-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .card-value {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -1px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .card-value.green { color: var(--green); }
+    .card-value.red   { color: var(--red); }
+    .card-value.blue  { color: var(--blue); }
+
+    .card-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    /* ── charts ── */
+    .charts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 16px;
+    }
+
+    .chart-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+    }
+
+    .chart-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+
+    .chart-wrap { position: relative; height: 200px; }
+
+    /* ── done banner ── */
+    #done-banner {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      background: #1e293b;
+      border: 1px solid var(--blue);
+      border-radius: 10px;
+      padding: 16px 24px;
+      margin-bottom: 24px;
+    }
+
+    #done-banner.show { display: flex; }
+
+    .banner-left { display: flex; align-items: center; gap: 12px; }
+    .banner-icon { font-size: 22px; }
+    .banner-title { font-weight: 700; font-size: 15px; }
+    .banner-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .passed-pill {
+      padding: 4px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    .passed-pill.pass { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid var(--green); }
+    .passed-pill.fail { background: rgba(239,68,68,0.15);  color: var(--red);   border: 1px solid var(--red); }
+
+    /* ── latency table ── */
+    .latency-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .lat-cell { text-align: center; }
+    .lat-label { font-size: 10px; color: var(--muted); font-weight: 600; }
+    .lat-val   { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 11px;
+      padding: 24px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><span>Pulse</span> — Live Dashboard</div>
+  <div id="status-badge">
+    <div class="dot" id="dot"></div>
+    <span id="status-text">Connecting…</span>
+  </div>
+</header>
+
+<main>
+  <!-- Done banner (hidden until run finishes) -->
+  <div id="done-banner">
+    <div class="banner-left">
+      <span class="banner-icon">✅</span>
+      <div>
+        <div class="banner-title">Run complete</div>
+        <div class="banner-sub" id="done-summary">—</div>
+      </div>
+    </div>
+    <div class="passed-pill" id="passed-pill">—</div>
+  </div>
+
+  <!-- Summary cards -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">Total Requests</div>
+      <div class="card-value blue" id="c-total">—</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Failures</div>
+      <div class="card-value" id="c-failed">—</div>
+    </div>
+    <div class="card">
+      <div class="card-label">RPS</div>
+      <div class="card-value" id="c-rps">—</div>
+      <div class="card-sub">requests / sec</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Dropped</div>
+      <div class="card-value" id="c-dropped">—</div>
+      <div class="card-sub" id="c-drop-rate"></div>
+    </div>
+    <div class="card">
+      <div class="card-label">P50 Latency</div>
+      <div class="card-value" id="c-p50">—</div>
+    </div>
+    <div class="card">
+      <div class="card-label">P99 Latency</div>
+      <div class="card-value" id="c-p99">—</div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="charts">
+    <div class="chart-card">
+      <div class="chart-title">Throughput (RPS)</div>
+      <div class="chart-wrap"><canvas id="chart-rps"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Latency percentiles (ms)</div>
+      <div class="chart-wrap"><canvas id="chart-latency"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Error &amp; drop rate (%)</div>
+      <div class="chart-wrap"><canvas id="chart-errors"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Current latency breakdown</div>
+      <div class="latency-grid" id="latency-grid">
+        <div class="lat-cell"><div class="lat-label">MIN</div><div class="lat-val" id="lat-min">—</div></div>
+        <div class="lat-cell"><div class="lat-label">P50</div><div class="lat-val" id="lat-p50">—</div></div>
+        <div class="lat-cell"><div class="lat-label">P90</div><div class="lat-val" id="lat-p90">—</div></div>
+        <div class="lat-cell"><div class="lat-label">P95</div><div class="lat-val" id="lat-p95">—</div></div>
+        <div class="lat-cell"><div class="lat-label">P99</div><div class="lat-val" id="lat-p99">—</div></div>
+        <div class="lat-cell"><div class="lat-label">MAX</div><div class="lat-val" id="lat-max">—</div></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>Pulse — algoryn.io</footer>
+
+<script>
+// ── Chart helpers ────────────────────────────────────────────────────
+const MAX_POINTS = 120;
+
+const chartDefaults = {
+  animation: false,
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12, font: { size: 11 } } } },
+  scales: {
+    x: { ticks: { color: '#475569', maxTicksLimit: 8, font: { size: 10 } }, grid: { color: '#1e293b' } },
+    y: { ticks: { color: '#475569', font: { size: 10 } }, grid: { color: '#1e293b' }, beginAtZero: true }
+  }
+};
+
+function makeChart(id, datasets) {
+  const ctx = document.getElementById(id).getContext('2d');
+  return new Chart(ctx, {
+    type: 'line',
+    data: { labels: [], datasets },
+    options: JSON.parse(JSON.stringify(chartDefaults))
+  });
+}
+
+function line(label, color, fill = false) {
+  return {
+    label, borderColor: color, backgroundColor: fill ? color + '20' : 'transparent',
+    data: [], pointRadius: 0, borderWidth: 2, fill, tension: 0.3
+  };
+}
+
+const rpsChart = makeChart('chart-rps', [
+  line('RPS', '#6366f1', true)
+]);
+
+const latencyChart = makeChart('chart-latency', [
+  line('P50', '#22c55e'),
+  line('P95', '#f59e0b'),
+  line('P99', '#ef4444'),
+]);
+
+const errorChart = makeChart('chart-errors', [
+  line('Error %', '#ef4444', true),
+  line('Drop %',  '#f59e0b'),
+]);
+
+function push(chart, label, ...values) {
+  chart.data.labels.push(label);
+  chart.data.datasets.forEach((ds, i) => ds.data.push(values[i] ?? null));
+  if (chart.data.labels.length > MAX_POINTS) {
+    chart.data.labels.shift();
+    chart.data.datasets.forEach(ds => ds.data.shift());
+  }
+  chart.update('none');
+}
+
+// ── Formatting helpers ───────────────────────────────────────────────
+function fmtMs(ns) {
+  // ns is nanoseconds (Go time.Duration)
+  const ms = ns / 1e6;
+  if (ms < 1)    return (ns / 1e3).toFixed(0) + 'µs';
+  if (ms < 1000) return ms.toFixed(1) + 'ms';
+  return (ms / 1000).toFixed(2) + 's';
+}
+
+function fmtNum(n)   { return n == null ? '—' : n.toLocaleString(); }
+function fmtRPS(r)   { return r == null ? '—' : r.toFixed(1); }
+function fmtPct(f)   { return f == null ? '—' : (f * 100).toFixed(1) + '%'; }
+
+function timeLabel(iso) {
+  const d = new Date(iso);
+  return d.getHours().toString().padStart(2,'0') + ':' +
+         d.getMinutes().toString().padStart(2,'0') + ':' +
+         d.getSeconds().toString().padStart(2,'0');
+}
+
+// ── DOM helpers ──────────────────────────────────────────────────────
+function set(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+function cls(id, ...classes) {
+  const el = document.getElementById(id);
+  if (el) { el.className = ''; classes.forEach(c => el.classList.add(c)); }
+}
+
+// ── Status ───────────────────────────────────────────────────────────
+function setStatus(state, text) {
+  const dot = document.getElementById('dot');
+  dot.className = 'dot ' + state;
+  set('status-text', text);
+}
+
+// ── Snapshot handler ────────────────────────────────────────────────
+function applySnapshot(snap) {
+  const label = timeLabel(snap.started_at);
+
+  // Cards
+  set('c-total',   fmtNum(snap.total));
+  set('c-rps',     fmtRPS(snap.rps));
+  set('c-dropped', fmtNum(snap.dropped));
+  set('c-drop-rate', fmtPct(snap.dropped_rate));
+
+  const failColor = snap.failed > 0 ? 'red' : 'green';
+  cls('c-failed', 'card-value', failColor);
+  set('c-failed', fmtNum(snap.failed));
+
+  const lat = snap.latency || {};
+  set('c-p50', lat.p50_ns ? fmtMs(lat.p50_ns) : '—');
+  set('c-p99', lat.p99_ns ? fmtMs(lat.p99_ns) : '—');
+
+  // Latency breakdown
+  set('lat-min', lat.min_ns  ? fmtMs(lat.min_ns)  : '—');
+  set('lat-p50', lat.p50_ns  ? fmtMs(lat.p50_ns)  : '—');
+  set('lat-p90', lat.p90_ns  ? fmtMs(lat.p90_ns)  : '—');
+  set('lat-p95', lat.p95_ns  ? fmtMs(lat.p95_ns)  : '—');
+  set('lat-p99', lat.p99_ns  ? fmtMs(lat.p99_ns)  : '—');
+  set('lat-max', lat.max_ns  ? fmtMs(lat.max_ns)  : '—');
+
+  // Charts
+  push(rpsChart, label, snap.rps);
+  push(latencyChart, label,
+    lat.p50_ns / 1e6,
+    lat.p95_ns / 1e6,
+    lat.p99_ns / 1e6
+  );
+  const errPct  = snap.total > 0 ? (snap.failed / snap.total) * 100 : 0;
+  const dropPct = snap.dropped_rate != null ? snap.dropped_rate * 100 : 0;
+  push(errorChart, label, errPct, dropPct);
+}
+
+// ── Done handler ────────────────────────────────────────────────────
+function applyDone(result) {
+  setStatus('done', 'Run complete');
+  const banner  = document.getElementById('done-banner');
+  const pill    = document.getElementById('passed-pill');
+  const summary = document.getElementById('done-summary');
+
+  banner.classList.add('show');
+
+  const passed = result.passed;
+  pill.textContent  = passed ? 'PASSED' : 'FAILED';
+  pill.className    = 'passed-pill ' + (passed ? 'pass' : 'fail');
+
+  const dur = result.duration_ms ? (result.duration_ms / 1000).toFixed(1) + 's' : '';
+  const rps = result.rps ? result.rps.toFixed(1) + ' rps' : '';
+  summary.textContent = [dur, rps, fmtNum(result.total) + ' requests'].filter(Boolean).join(' · ');
+
+  // Final latency
+  const lat = result.latency || {};
+  set('lat-min', lat.min_ns  ? fmtMs(lat.min_ns)  : '—');
+  set('lat-p50', lat.p50_ns  ? fmtMs(lat.p50_ns)  : '—');
+  set('lat-p90', lat.p90_ns  ? fmtMs(lat.p90_ns)  : '—');
+  set('lat-p95', lat.p95_ns  ? fmtMs(lat.p95_ns)  : '—');
+  set('lat-p99', lat.p99_ns  ? fmtMs(lat.p99_ns)  : '—');
+  set('lat-max', lat.max_ns  ? fmtMs(lat.max_ns)  : '—');
+
+  set('c-total',   fmtNum(result.total));
+  set('c-rps',     fmtRPS(result.rps));
+  set('c-dropped', fmtNum(result.dropped));
+  set('c-drop-rate', fmtPct(result.dropped_rate));
+  cls('c-failed', 'card-value', result.failed > 0 ? 'red' : 'green');
+  set('c-failed', fmtNum(result.failed));
+  set('c-p50', lat.p50_ns ? fmtMs(lat.p50_ns) : '—');
+  set('c-p99', lat.p99_ns ? fmtMs(lat.p99_ns) : '—');
+}
+
+// ── SSE connection ───────────────────────────────────────────────────
+function connect() {
+  setStatus('', 'Connecting…');
+  const es = new EventSource('/events');
+
+  es.addEventListener('open', () => {
+    setStatus('running', 'Running');
+  });
+
+  es.addEventListener('snapshot', e => {
+    try { applySnapshot(JSON.parse(e.data)); } catch(err) { console.error('snapshot parse error', err); }
+  });
+
+  es.addEventListener('done', e => {
+    try {
+      applyDone(JSON.parse(e.data));
+      es.close();
+    } catch(err) { console.error('done parse error', err); }
+  });
+
+  es.addEventListener('error', () => {
+    setStatus('error', 'Disconnected — retrying…');
+    es.close();
+    setTimeout(connect, 3000);
+  });
+}
+
+connect();
+</script>
+</body>
+</html>
