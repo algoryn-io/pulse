@@ -223,11 +223,8 @@ func run(args []string, stdout io.Writer) error {
 	var runErr error
 	if len(options.workers) > 0 {
 		result, runErr = runTestWithWorkers(executeArgs, options.workers, options.dashboardAddr)
-<<<<<<< Updated upstream
-=======
 	} else if options.dashboardAddr != "" {
 		result, runErr = runTestWithDashboard(executeArgs, options.dashboardAddr)
->>>>>>> Stashed changes
 	} else {
 		result, runErr = runTestWithOptions(executeArgs, options.dashboardAddr)
 	}
