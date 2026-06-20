@@ -39,11 +39,14 @@ var (
 	errUnsupportedSaturation  = errors.New("pulse: unsupported saturation policy")
 	errNegativeDroppedRate    = errors.New("pulse: threshold dropped rate must not be negative")
 	errDroppedRateAboveOne    = errors.New("pulse: threshold dropped rate must not be greater than 1")
-	errNegativeMaxConcurrency = errors.New("pulse: max concurrency must not be negative")
-	errNegativeReportInterval = errors.New("pulse: reporting interval must not be negative")
-	errReportIntervalTooSmall = errors.New("pulse: reporting interval must be at least 10ms when enabled")
-	errTooManySnapshots       = errors.New("pulse: reporting interval would generate too many snapshots")
-	errMaxConcurrencyTooHigh  = errors.New("pulse: max concurrency must not exceed 1000000")
+	errNegativeMaxConcurrency    = errors.New("pulse: max concurrency must not be negative")
+	errNegativeReportInterval    = errors.New("pulse: reporting interval must not be negative")
+	errReportIntervalTooSmall    = errors.New("pulse: reporting interval must be at least 10ms when enabled")
+	errTooManySnapshots          = errors.New("pulse: reporting interval would generate too many snapshots")
+	errMaxConcurrencyTooHigh     = errors.New("pulse: max concurrency must not exceed 1000000")
+	errAdaptiveRequiresInterval  = errors.New("pulse: Adaptive requires Reporting.Interval > 0")
+	errAdaptiveInvalidErrorRate  = errors.New("pulse: Adaptive.MaxErrorRate must be in [0,1]")
+	errAdaptiveInvalidP99        = errors.New("pulse: Adaptive.MaxP99 must not be negative")
 )
 
 const (
@@ -51,6 +54,12 @@ const (
 	maxSnapshots         = 10_000
 	maxConcurrency       = 1_000_000
 )
+
+// AdaptiveConfig enables real-time RPS auto-tuning for PhaseTypeConstant phases.
+// On each reporting interval the engine adjusts the arrival rate up or down
+// based on observed error rate and P99 latency thresholds.
+// Requires Reporting.Interval > 0.
+type AdaptiveConfig = engine.AdaptiveConfig
 
 // SaturationPolicy controls what happens when all execution slots are in use.
 type SaturationPolicy = engine.SaturationPolicy
@@ -172,6 +181,10 @@ type Config struct {
 	// metrics observed during that window. It is invoked from a background
 	// goroutine and must not block. Only active when Reporting.Interval > 0.
 	OnSnapshot func(snapshot Snapshot)
+	// Adaptive, when non-zero, enables real-time RPS auto-tuning for
+	// PhaseTypeConstant phases based on observed error rate and P99 latency.
+	// Requires Reporting.Interval > 0.
+	Adaptive AdaptiveConfig
 }
 
 // Test is the root public input for a Pulse run.
@@ -325,6 +338,7 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 			Saturation:     normalizedSaturationPolicy(test.Config.SaturationPolicy),
 			ReportInterval: test.Config.Reporting.Interval,
 			OnLiveSnapshot: onLiveSnapshot,
+			Adaptive:       test.Config.Adaptive,
 		},
 	)
 
@@ -449,6 +463,18 @@ func ValidateConfig(cfg Config) error {
 	}
 	if cfg.Thresholds.MaxDroppedRate > 1 {
 		return errDroppedRateAboveOne
+	}
+
+	if !cfg.Adaptive.IsZero() {
+		if cfg.Reporting.Interval == 0 {
+			return errAdaptiveRequiresInterval
+		}
+		if cfg.Adaptive.MaxErrorRate < 0 || cfg.Adaptive.MaxErrorRate > 1 {
+			return errAdaptiveInvalidErrorRate
+		}
+		if cfg.Adaptive.MaxP99 < 0 {
+			return errAdaptiveInvalidP99
+		}
 	}
 
 	return nil
