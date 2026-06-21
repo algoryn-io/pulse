@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **HAR import** — `har.LoadFile(path, cfg)` and `har.Load(r, cfg)` parse HTTP Archive files and return a `pulse.Scenario` that replays all recorded requests in sequence via `pulse.Flow`; hop-by-hop headers are stripped automatically; `Config.Filter` skips entries (e.g. static assets); `Config.Client` accepts a custom `*http.Client`; errors include the step name (`"GET https://api/users: HTTP 404"`) for easy diagnosis
+
 - **gRPC support** — `transport.NewGRPCClient(cfg GRPCClientConfig)` dials a gRPC server (insecure, system TLS, or custom TLS) and exposes `Conn() *grpc.ClientConn` for passing to generated client constructors; `transport.CallGRPC(fn func() error) (int, error)` wraps a gRPC call and maps the gRPC status code to an HTTP-equivalent integer so Pulse thresholds and error metrics work consistently across transports; all 17 gRPC codes are mapped
 
 - **Scenario chaining** — `pulse.Sequence(steps ...Scenario) Scenario` runs steps in order and stops on the first error, returning that step's status code; `pulse.Flow(steps ...Step) Scenario` does the same but wraps errors with the step name (`"login: unauthorized"`) for easier identification in result error maps; `pulse.Step{Name, Do}` pairs a name with a scenario function

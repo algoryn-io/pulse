@@ -45,6 +45,7 @@ Load-fidelity fields (`scheduled`, `started`, `dropped`, `dropped_rate`, `comple
 | **Live dashboard** | Stream metrics to a browser via SSE with `--dashboard :9090`. Displays live RPS, latency percentile charts, and error rate as the run progresses. Shuts down automatically when the run completes. |
 | **Adaptive load shaping** | Auto-tune RPS in real time based on observed error rate and P99 latency. Set `Config.Adaptive` to define thresholds; the engine steps the arrival rate down when limits are exceeded and recovers when conditions improve. Requires `Reporting.Interval > 0`. |
 | **Chaos injection** | Inject synthetic faults at the transport layer without touching scenario code. `transport.NewChaosRoundTripper` wraps any `http.RoundTripper` and applies configurable error injection (`ErrorRate`) and latency injection (`LatencyRate` + `Latency`) per request. |
+| **HAR import** | `har.LoadFile(path, cfg)` converts an HTTP Archive file into a `pulse.Scenario` that replays all recorded requests in sequence. Filter entries, supply a custom client, and use recorded Auth headers as-is. |
 | **gRPC support** | `transport.NewGRPCClient` dials a gRPC server (insecure / TLS). `transport.CallGRPC(fn)` wraps a gRPC call and maps gRPC status codes to HTTP-equivalent integers so Pulse thresholds work across both transports. |
 | **Scenario chaining** | `pulse.Sequence(steps...)` and `pulse.Flow(steps...)` compose multiple scenario functions into a single user journey. `Flow` wraps errors with the step name for easy identification. |
 | **Data injection** | `pulse.NewFeeder[T](items)` supplies parameterized values (user IDs, payloads, tokens) to concurrent scenario invocations round-robin. `pulse.NewFeederFunc[T](fn)` supports generated or random data. Both are generic and allocation-free in the hot path. |
@@ -238,6 +239,26 @@ pulse.Run(pulse.Test{
 | `NewInfluxDBReporter` | HTTP — InfluxDB v2 line protocol (`/api/v2/write`) | `algoryn.io/pulse/reporter` |
 | `NewDatadogReporter` | UDP — DogStatsD datagrams | `algoryn.io/pulse/reporter` |
 | `NewOTelReporter` | OpenTelemetry gauges via any `metric.MeterProvider` | `algoryn.io/pulse/reporter` |
+
+### HAR import
+
+Export a session from your browser's DevTools (Network tab → Save as HAR) and turn it into a load test in two lines:
+
+```go
+scenario, err := har.LoadFile("session.har", har.Config{
+    // skip static assets and third-party requests
+    Filter: func(req har.Request) bool {
+        return strings.HasPrefix(req.URL, "https://api.myapp.com")
+    },
+})
+if err != nil { ... }
+
+pulse.Run(pulse.Test{Scenario: scenario, Config: cfg})
+```
+
+Recorded `Authorization` headers are forwarded as-is. Hop-by-hop headers (`Host`, `Connection`, `Content-Length`, etc.) are stripped automatically. Each request becomes a named `pulse.Flow` step so failures appear as `"POST https://api/checkout: HTTP 500"` in the result error map.
+
+> **Warning:** HAR files contain session tokens and credentials. Do not commit them to version control.
 
 ### gRPC support
 
