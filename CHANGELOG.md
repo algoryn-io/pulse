@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **OpenTelemetry reporter** — `reporter.NewOTelReporter(provider metric.MeterProvider)` exports Pulse metrics as OTEL gauges (`pulse.rps`, `pulse.error_rate`, `pulse.latency.p50/p90/p95/p99`, `pulse.requests.total/failed`); the caller owns the provider and its exporter (OTLP, stdout, etc.), keeping transport decisions outside the reporter
+
 - **Env var interpolation in YAML** — `config.Load` now expands `${VAR}` and `${VAR:-default}` placeholders in YAML files before unmarshalling; unset required variables return a descriptive error naming the missing variable; useful for secrets (`${API_TOKEN}`), environment-specific URLs (`${BASE_URL}`), and CI overrides
 
 - **Data injection / Feeder** — `pulse.NewFeeder[T](items []T)` returns a generic, thread-safe feeder that supplies values to concurrent scenario invocations round-robin; `pulse.NewFeederFunc[T](fn func() T)` supports generated or random values; both expose a single `Next() T` method with no allocations in the hot path
