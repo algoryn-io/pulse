@@ -125,6 +125,11 @@ func Load(path string) (pulse.Test, error) {
 		return pulse.Test{}, errors.New("config: file must not exceed 1MiB")
 	}
 
+	data, err = expandEnv(data)
+	if err != nil {
+		return pulse.Test{}, err
+	}
+
 	var cfg fileConfig
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)

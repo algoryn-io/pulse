@@ -40,7 +40,7 @@ Load-fidelity fields (`scheduled`, `started`, `dropped`, `dropped_rate`, `comple
 |------|----------------|
 | **Load model** | **Multi-phase** tests: **Constant**, **Ramp**, **Step**, and **Spike** — arrival-rate (RPS) driven, with explicit `drop` or `block` saturation behavior. |
 | **Latency** | **P50, P90, P95, P99** (plus min, mean, max) from the **C++ histogram**; stable under load, bounded memory. |
-| **Configuration** | Strict **YAML** test definitions: target, phases, `maxConcurrency`, saturation policy, and optional **thresholds** (error rate, dropped-arrival rate, mean / P95 / P99 latency). |
+| **Configuration** | Strict **YAML** test definitions with **env var interpolation** (`${VAR}` / `${VAR:-default}`). Supports target, phases, `maxConcurrency`, saturation policy, and optional **thresholds** (error rate, dropped-arrival rate, mean / P95 / P99 latency). |
 | **Output** | **Text** (human-readable) and **JSON** (automation, CI artifacts); optional interval snapshots expose transient behavior in JSON. Combine `--json` and `--out` to mirror JSON to a file. |
 | **Live dashboard** | Stream metrics to a browser via SSE with `--dashboard :9090`. Displays live RPS, latency percentile charts, and error rate as the run progresses. Shuts down automatically when the run completes. |
 | **Adaptive load shaping** | Auto-tune RPS in real time based on observed error rate and P99 latency. Set `Config.Adaptive` to define thresholds; the engine steps the arrival rate down when limits are exceeded and recovers when conditions improve. Requires `Reporting.Interval > 0`. |
@@ -235,6 +235,28 @@ pulse.Run(pulse.Test{
 | `NewPrometheusReporter` | HTTP `/metrics` — Prometheus text exposition | `algoryn.io/pulse/reporter` |
 | `NewInfluxDBReporter` | HTTP — InfluxDB v2 line protocol (`/api/v2/write`) | `algoryn.io/pulse/reporter` |
 | `NewDatadogReporter` | UDP — DogStatsD datagrams | `algoryn.io/pulse/reporter` |
+
+### Environment variable interpolation
+
+Any value in a YAML config file can reference an environment variable using `${VAR}` or `${VAR:-default}`:
+
+```yaml
+target:
+  url: ${BASE_URL:-http://localhost:8080}
+  method: GET
+  headers:
+    Authorization: Bearer ${API_TOKEN}
+
+phases:
+  - type: constant
+    duration: ${DURATION:-30s}
+    arrivalRate: ${RPS:-50}
+```
+
+- `${VAR}` — required; `config.Load` returns an error naming the missing variable if it is not set.
+- `${VAR:-default}` — optional; the literal after `:-` is used when the variable is unset.
+
+This keeps secrets out of YAML files and lets CI/CD pipelines override targets without editing config files.
 
 ### Data injection
 
