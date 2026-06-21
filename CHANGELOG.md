@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Correlations / value extraction** — `pulse.Extractor[T]` is a generic, thread-safe container for passing values extracted in one scenario step to subsequent steps (e.g. an auth token from a login response); `transport.ExtractHeader(resp, key)`, `transport.ExtractJSONString(resp, field)`, and `transport.ExtractRegexp(resp, pattern)` extract values from a `*transport.Response` for storing in an Extractor
+
 - **HAR import** — `har.LoadFile(path, cfg)` and `har.Load(r, cfg)` parse HTTP Archive files and return a `pulse.Scenario` that replays all recorded requests in sequence via `pulse.Flow`; hop-by-hop headers are stripped automatically; `Config.Filter` skips entries (e.g. static assets); `Config.Client` accepts a custom `*http.Client`; errors include the step name (`"GET https://api/users: HTTP 404"`) for easy diagnosis
 
 - **gRPC support** — `transport.NewGRPCClient(cfg GRPCClientConfig)` dials a gRPC server (insecure, system TLS, or custom TLS) and exposes `Conn() *grpc.ClientConn` for passing to generated client constructors; `transport.CallGRPC(fn func() error) (int, error)` wraps a gRPC call and maps the gRPC status code to an HTTP-equivalent integer so Pulse thresholds and error metrics work consistently across transports; all 17 gRPC codes are mapped

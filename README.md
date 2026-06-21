@@ -45,6 +45,7 @@ Load-fidelity fields (`scheduled`, `started`, `dropped`, `dropped_rate`, `comple
 | **Live dashboard** | Stream metrics to a browser via SSE with `--dashboard :9090`. Displays live RPS, latency percentile charts, and error rate as the run progresses. Shuts down automatically when the run completes. |
 | **Adaptive load shaping** | Auto-tune RPS in real time based on observed error rate and P99 latency. Set `Config.Adaptive` to define thresholds; the engine steps the arrival rate down when limits are exceeded and recovers when conditions improve. Requires `Reporting.Interval > 0`. |
 | **Chaos injection** | Inject synthetic faults at the transport layer without touching scenario code. `transport.NewChaosRoundTripper` wraps any `http.RoundTripper` and applies configurable error injection (`ErrorRate`) and latency injection (`LatencyRate` + `Latency`) per request. |
+| **Correlations** | `pulse.Extractor[T]` passes values extracted in one step (e.g. auth token from login) to subsequent steps. `transport.ExtractHeader`, `ExtractJSONString`, and `ExtractRegexp` pull values from a `*Response`. |
 | **HAR import** | `har.LoadFile(path, cfg)` converts an HTTP Archive file into a `pulse.Scenario` that replays all recorded requests in sequence. Filter entries, supply a custom client, and use recorded Auth headers as-is. |
 | **gRPC support** | `transport.NewGRPCClient` dials a gRPC server (insecure / TLS). `transport.CallGRPC(fn)` wraps a gRPC call and maps gRPC status codes to HTTP-equivalent integers so Pulse thresholds work across both transports. |
 | **Scenario chaining** | `pulse.Sequence(steps...)` and `pulse.Flow(steps...)` compose multiple scenario functions into a single user journey. `Flow` wraps errors with the step name for easy identification. |
@@ -239,6 +240,40 @@ pulse.Run(pulse.Test{
 | `NewInfluxDBReporter` | HTTP — InfluxDB v2 line protocol (`/api/v2/write`) | `algoryn.io/pulse/reporter` |
 | `NewDatadogReporter` | UDP — DogStatsD datagrams | `algoryn.io/pulse/reporter` |
 | `NewOTelReporter` | OpenTelemetry gauges via any `metric.MeterProvider` | `algoryn.io/pulse/reporter` |
+
+### Correlations
+
+Use `pulse.Extractor[T]` to pass a value extracted in one step to subsequent steps. Combine it with `DoWithResponse` and the extraction helpers in `transport`:
+
+```go
+var token pulse.Extractor[string]
+
+scenario := pulse.Flow(
+    pulse.Step{Name: "login", Do: func(ctx context.Context) (int, error) {
+        resp, err := client.DoWithResponse(ctx, "POST", "http://api/auth/login", body)
+        if err != nil { return 0, err }
+        if err := transport.AssertStatus(resp, 200); err != nil { return resp.StatusCode, err }
+        tok, err := transport.ExtractJSONString(resp, "token")
+        if err != nil { return resp.StatusCode, err }
+        token.Set(tok)
+        return resp.StatusCode, nil
+    }},
+    pulse.Step{Name: "get-orders", Do: func(ctx context.Context) (int, error) {
+        req, _ := http.NewRequestWithContext(ctx, "GET", "http://api/orders", nil)
+        req.Header.Set("Authorization", "Bearer "+token.MustGet())
+        // ...
+        return client.Do(ctx, "GET", "http://api/orders", nil)
+    }},
+)
+```
+
+Three extraction helpers work directly on `*transport.Response`:
+
+| Helper | Extracts |
+|--------|----------|
+| `transport.ExtractHeader(resp, key)` | Response header value |
+| `transport.ExtractJSONString(resp, field)` | Top-level JSON string field |
+| `transport.ExtractRegexp(resp, pattern)` | First capture group of a regex |
 
 ### HAR import
 
