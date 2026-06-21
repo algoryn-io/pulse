@@ -45,6 +45,7 @@ Load-fidelity fields (`scheduled`, `started`, `dropped`, `dropped_rate`, `comple
 | **Live dashboard** | Stream metrics to a browser via SSE with `--dashboard :9090`. Displays live RPS, latency percentile charts, and error rate as the run progresses. Shuts down automatically when the run completes. |
 | **Adaptive load shaping** | Auto-tune RPS in real time based on observed error rate and P99 latency. Set `Config.Adaptive` to define thresholds; the engine steps the arrival rate down when limits are exceeded and recovers when conditions improve. Requires `Reporting.Interval > 0`. |
 | **Chaos injection** | Inject synthetic faults at the transport layer without touching scenario code. `transport.NewChaosRoundTripper` wraps any `http.RoundTripper` and applies configurable error injection (`ErrorRate`) and latency injection (`LatencyRate` + `Latency`) per request. |
+| **gRPC support** | `transport.NewGRPCClient` dials a gRPC server (insecure / TLS). `transport.CallGRPC(fn)` wraps a gRPC call and maps gRPC status codes to HTTP-equivalent integers so Pulse thresholds work across both transports. |
 | **Scenario chaining** | `pulse.Sequence(steps...)` and `pulse.Flow(steps...)` compose multiple scenario functions into a single user journey. `Flow` wraps errors with the step name for easy identification. |
 | **Data injection** | `pulse.NewFeeder[T](items)` supplies parameterized values (user IDs, payloads, tokens) to concurrent scenario invocations round-robin. `pulse.NewFeederFunc[T](fn)` supports generated or random data. Both are generic and allocation-free in the hot path. |
 | **Response assertions** | `transport.HTTPClient.DoWithResponse` returns a `*transport.Response` (status, headers, pre-read body). Use `AssertStatus`, `AssertBodyContains`, `AssertBodyJSON`, and `AssertHeader` to validate responses inside scenarios. |
@@ -237,6 +238,30 @@ pulse.Run(pulse.Test{
 | `NewInfluxDBReporter` | HTTP — InfluxDB v2 line protocol (`/api/v2/write`) | `algoryn.io/pulse/reporter` |
 | `NewDatadogReporter` | UDP — DogStatsD datagrams | `algoryn.io/pulse/reporter` |
 | `NewOTelReporter` | OpenTelemetry gauges via any `metric.MeterProvider` | `algoryn.io/pulse/reporter` |
+
+### gRPC support
+
+Use `transport.NewGRPCClient` to dial a gRPC server, then pass `Conn()` to any generated client constructor. Wrap calls with `transport.CallGRPC` to get a Pulse-compatible `(statusCode, error)` pair where the code is the HTTP equivalent of the gRPC status:
+
+```go
+client, err := transport.NewGRPCClient(transport.GRPCClientConfig{
+    Target:   "localhost:50051",
+    Insecure: true,
+})
+if err != nil { ... }
+defer client.Close()
+
+svc := pb.NewUserServiceClient(client.Conn())
+
+scenario := func(ctx context.Context) (int, error) {
+    return transport.CallGRPC(func() error {
+        _, err := svc.GetUser(ctx, &pb.GetUserRequest{Id: 42})
+        return err
+    })
+}
+```
+
+gRPC status codes map to HTTP-equivalent integers (`NOT_FOUND` → 404, `UNAUTHENTICATED` → 401, `RESOURCE_EXHAUSTED` → 429, etc.) so existing Pulse thresholds and error metrics work without changes.
 
 ### Scenario chaining
 
