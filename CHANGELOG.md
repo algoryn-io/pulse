@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 ---
 ## [Unreleased]
 
+---
+## [v0.5.0] — 2026-06-20
+
 ### Added
 
 - **Adaptive load shaping** — `Config.Adaptive` (`AdaptiveConfig`) enables real-time RPS auto-tuning for `PhaseTypeConstant` phases; the engine checks each reporting interval and multiplies the arrival rate by `StepDown` when `MaxErrorRate` or `MaxP99` is exceeded, and by `StepUp` when conditions recover; rate is clamped to `[MinRPS, MaxRPS]`; requires `Reporting.Interval > 0`
