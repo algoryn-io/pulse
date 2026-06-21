@@ -5,12 +5,15 @@ All notable changes to this project will be documented in this file.
 ---
 ## [Unreleased]
 
+### Added
+
+- **Data injection / Feeder** — `pulse.NewFeeder[T](items []T)` returns a generic, thread-safe feeder that supplies values to concurrent scenario invocations round-robin; `pulse.NewFeederFunc[T](fn func() T)` supports generated or random values; both expose a single `Next() T` method with no allocations in the hot path
+- **Response assertions** — `transport.Response` type returned by the new `HTTPClient.DoWithResponse(ctx, method, url, body)` method; unlike `Do`, status >= 400 does not produce an error, giving callers full control via assertion helpers: `AssertStatus(resp, expected)`, `AssertBodyContains(resp, substr)`, `AssertBodyJSON(resp, &v)`, `AssertHeader(resp, key, expected)`; the body is pre-read into memory (up to `MaxResponseBytes`) so helpers can inspect it without draining
+
 ---
 ## [v0.5.0] — 2026-06-20
 
 ### Added
-
-- **Response assertions** — `transport.Response` type returned by the new `HTTPClient.DoWithResponse(ctx, method, url, body)` method; unlike `Do`, status >= 400 does not produce an error, giving callers full control via assertion helpers: `AssertStatus(resp, expected)`, `AssertBodyContains(resp, substr)`, `AssertBodyJSON(resp, &v)`, `AssertHeader(resp, key, expected)`; the body is pre-read into memory (up to `MaxResponseBytes`) so helpers can inspect it without draining
 
 - **Adaptive load shaping** — `Config.Adaptive` (`AdaptiveConfig`) enables real-time RPS auto-tuning for `PhaseTypeConstant` phases; the engine checks each reporting interval and multiplies the arrival rate by `StepDown` when `MaxErrorRate` or `MaxP99` is exceeded, and by `StepUp` when conditions recover; rate is clamped to `[MinRPS, MaxRPS]`; requires `Reporting.Interval > 0`
 - `scheduler.Phase.RateFunc func() float64` — optional per-tick rate override; when non-nil, the scheduler calls it before each token-bucket refill so external controllers (e.g. `adaptiveController`) can adjust arrival rate without restarting the phase

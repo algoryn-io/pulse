@@ -45,6 +45,8 @@ Load-fidelity fields (`scheduled`, `started`, `dropped`, `dropped_rate`, `comple
 | **Live dashboard** | Stream metrics to a browser via SSE with `--dashboard :9090`. Displays live RPS, latency percentile charts, and error rate as the run progresses. Shuts down automatically when the run completes. |
 | **Adaptive load shaping** | Auto-tune RPS in real time based on observed error rate and P99 latency. Set `Config.Adaptive` to define thresholds; the engine steps the arrival rate down when limits are exceeded and recovers when conditions improve. Requires `Reporting.Interval > 0`. |
 | **Chaos injection** | Inject synthetic faults at the transport layer without touching scenario code. `transport.NewChaosRoundTripper` wraps any `http.RoundTripper` and applies configurable error injection (`ErrorRate`) and latency injection (`LatencyRate` + `Latency`) per request. |
+| **Data injection** | `pulse.NewFeeder[T](items)` supplies parameterized values (user IDs, payloads, tokens) to concurrent scenario invocations round-robin. `pulse.NewFeederFunc[T](fn)` supports generated or random data. Both are generic and allocation-free in the hot path. |
+| **Response assertions** | `transport.HTTPClient.DoWithResponse` returns a `*transport.Response` (status, headers, pre-read body). Use `AssertStatus`, `AssertBodyContains`, `AssertBodyJSON`, and `AssertHeader` to validate responses inside scenarios. |
 | **Plugin reporters** | Export metrics to external systems by implementing `pulse.Reporter` (`OnSnapshot` + `OnResult`). Built-in reporters: `reporter.NewPrometheusReporter` (Prometheus `/metrics`), `reporter.NewInfluxDBReporter` (InfluxDB v2 line protocol), `reporter.NewDatadogReporter` (DogStatsD UDP). Wire them via `Config.Reporters`. |
 | **API** | Use **`pulse.Run`** or cancelable **`pulse.RunContext`**, `OnResult` hooks, `OnSnapshot` for per-interval callbacks, optional **`OnFabricEmit`** for **Fabric protobuf** (`RunEvent` + `RunCompleted` event), and **middleware** for chaos-style scenarios; **`RunT`** for `go test` integration. |
 | **Tooling** | Optional **`mockserver`** for local demos; see [`examples/`](examples/). |
@@ -233,6 +235,64 @@ pulse.Run(pulse.Test{
 | `NewPrometheusReporter` | HTTP `/metrics` — Prometheus text exposition | `algoryn.io/pulse/reporter` |
 | `NewInfluxDBReporter` | HTTP — InfluxDB v2 line protocol (`/api/v2/write`) | `algoryn.io/pulse/reporter` |
 | `NewDatadogReporter` | UDP — DogStatsD datagrams | `algoryn.io/pulse/reporter` |
+
+### Data injection
+
+Use `pulse.NewFeeder` to supply different values to each scenario invocation without managing concurrency yourself:
+
+```go
+type User struct {
+    ID    int
+    Token string
+}
+
+users := pulse.NewFeeder([]User{
+    {ID: 1, Token: "tok-a"},
+    {ID: 2, Token: "tok-b"},
+    {ID: 3, Token: "tok-c"},
+})
+
+client := transport.NewHTTPClient()
+
+scenario := func(ctx context.Context) (int, error) {
+    u := users.Next()
+    return client.Get(ctx, fmt.Sprintf("http://api/users/%d", u.ID))
+}
+```
+
+`NewFeeder` cycles through the slice round-robin and is safe for concurrent use. For generated or random data, use `NewFeederFunc`:
+
+```go
+ids := pulse.NewFeederFunc(func() int {
+    return rand.Intn(10_000) + 1
+})
+```
+
+### Response assertions
+
+Use `DoWithResponse` when you need to validate the response body or headers inside a scenario:
+
+```go
+scenario := func(ctx context.Context) (int, error) {
+    resp, err := client.DoWithResponse(ctx, "GET", "http://api/orders/1", nil)
+    if err != nil {
+        return 0, err
+    }
+    if err := transport.AssertStatus(resp, 200); err != nil {
+        return resp.StatusCode, err
+    }
+    if err := transport.AssertHeader(resp, "Content-Type", "application/json"); err != nil {
+        return resp.StatusCode, err
+    }
+    var order struct{ Status string }
+    if err := transport.AssertBodyJSON(resp, &order); err != nil {
+        return resp.StatusCode, err
+    }
+    return resp.StatusCode, transport.AssertBodyContains(resp, `"status":"confirmed"`)
+}
+```
+
+Unlike `Do`, `DoWithResponse` does not error on status >= 400, giving you full control over what counts as a failure.
 
 **Mockserver modes**
 
