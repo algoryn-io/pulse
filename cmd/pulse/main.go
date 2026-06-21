@@ -226,7 +226,7 @@ func run(args []string, stdout io.Writer) error {
 	} else if options.dashboardAddr != "" {
 		result, runErr = runTestWithDashboard(executeArgs, options.dashboardAddr)
 	} else {
-		result, runErr = runTestWithOptions(executeArgs, options.dashboardAddr)
+		result, runErr = execute(executeArgs)
 	}
 	progress.stop()
 	showResults := runErr == nil || isThresholdEvaluationFailureOnly(runErr)

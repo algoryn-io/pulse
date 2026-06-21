@@ -25,12 +25,13 @@ const (
 
 // Engine executes a test definition.
 type Engine struct {
-	phases          []scheduler.Phase
-	scenario        func(context.Context) (int, error)
-	maxConcurrency  int
-	saturation      SaturationPolicy
-	reportInterval  time.Duration
-	onLiveSnapshot  func(metrics.Snapshot)
+	phases         []scheduler.Phase
+	scenario       func(context.Context) (int, error)
+	maxConcurrency int
+	saturation     SaturationPolicy
+	reportInterval time.Duration
+	onLiveSnapshot func(metrics.Snapshot)
+	adaptive       AdaptiveConfig
 }
 
 // Options contains execution settings for Engine.
@@ -43,6 +44,9 @@ type Options struct {
 	// from a background goroutine and must not block. Only active when
 	// ReportInterval > 0.
 	OnLiveSnapshot func(metrics.Snapshot)
+	// Adaptive, when non-zero, enables real-time RPS auto-tuning for
+	// PhaseTypeConstant phases. Requires ReportInterval > 0.
+	Adaptive AdaptiveConfig
 }
 
 // New creates an engine for the given execution inputs.
@@ -74,6 +78,7 @@ func NewWithOptions(phases []scheduler.Phase, scenario func(context.Context) (in
 		saturation:     options.Saturation,
 		reportInterval: options.ReportInterval,
 		onLiveSnapshot: options.OnLiveSnapshot,
+		adaptive:       options.Adaptive,
 	}
 }
 
@@ -133,10 +138,13 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 		return nil
 	}
 
-	// Start a background goroutine that emits live snapshots at each reporting
-	// interval. This lets callers (e.g. a dashboard server) observe metrics as
-	// the run progresses without waiting for completion.
-	if e.onLiveSnapshot != nil && e.reportInterval > 0 {
+	// adaptiveCtrl holds the controller for the currently running phase.
+	// Swapped at the start of each phase; read by the interval goroutine.
+	var adaptiveCtrl atomic.Pointer[adaptiveController]
+
+	// Start a background goroutine that ticks at reportInterval to emit live
+	// snapshots and feed the adaptive controller.
+	if e.reportInterval > 0 && (e.onLiveSnapshot != nil || !e.adaptive.IsZero()) {
 		liveCtx, liveCancel := context.WithCancel(ctx)
 		defer liveCancel()
 		go func() {
@@ -149,7 +157,12 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 				case t := <-ticker.C:
 					snap := snapshots.liveSnapshot(t)
 					if snap.Duration > 0 {
-						e.onLiveSnapshot(snap)
+						if e.onLiveSnapshot != nil {
+							e.onLiveSnapshot(snap)
+						}
+						if ctrl := adaptiveCtrl.Load(); ctrl != nil {
+							ctrl.onSnapshot(snap)
+						}
 					}
 				}
 			}
@@ -157,11 +170,19 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 	}
 
 	for _, phase := range e.phases {
-		if err := scheduler.Run(ctx, phase, wrappedScenario); err != nil {
+		p := phase
+		if !e.adaptive.IsZero() && e.reportInterval > 0 {
+			ctrl := newAdaptiveController(e.adaptive, p.ArrivalRate)
+			adaptiveCtrl.Store(ctrl)
+			p.RateFunc = ctrl.rate
+		}
+		if err := scheduler.Run(ctx, p, wrappedScenario); err != nil {
+			adaptiveCtrl.Store(nil)
 			wg.Wait()
 			return withLoadStats(aggregator.Result(time.Since(startedAt)), snapshots, &scheduled, &started, &dropped, &maxActive), err
 		}
 	}
+	adaptiveCtrl.Store(nil)
 
 	wg.Wait()
 	return withLoadStats(aggregator.Result(time.Since(startedAt)), snapshots, &scheduled, &started, &dropped, &maxActive), nil
