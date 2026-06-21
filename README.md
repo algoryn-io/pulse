@@ -43,6 +43,9 @@ Load-fidelity fields (`scheduled`, `started`, `dropped`, `dropped_rate`, `comple
 | **Configuration** | Strict **YAML** test definitions: target, phases, `maxConcurrency`, saturation policy, and optional **thresholds** (error rate, dropped-arrival rate, mean / P95 / P99 latency). |
 | **Output** | **Text** (human-readable) and **JSON** (automation, CI artifacts); optional interval snapshots expose transient behavior in JSON. Combine `--json` and `--out` to mirror JSON to a file. |
 | **Live dashboard** | Stream metrics to a browser via SSE with `--dashboard :9090`. Displays live RPS, latency percentile charts, and error rate as the run progresses. Shuts down automatically when the run completes. |
+| **Adaptive load shaping** | Auto-tune RPS in real time based on observed error rate and P99 latency. Set `Config.Adaptive` to define thresholds; the engine steps the arrival rate down when limits are exceeded and recovers when conditions improve. Requires `Reporting.Interval > 0`. |
+| **Chaos injection** | Inject synthetic faults at the transport layer without touching scenario code. `transport.NewChaosRoundTripper` wraps any `http.RoundTripper` and applies configurable error injection (`ErrorRate`) and latency injection (`LatencyRate` + `Latency`) per request. |
+| **Plugin reporters** | Export metrics to external systems by implementing `pulse.Reporter` (`OnSnapshot` + `OnResult`). Built-in reporters: `reporter.NewPrometheusReporter` (Prometheus `/metrics`), `reporter.NewInfluxDBReporter` (InfluxDB v2 line protocol), `reporter.NewDatadogReporter` (DogStatsD UDP). Wire them via `Config.Reporters`. |
 | **API** | Use **`pulse.Run`** or cancelable **`pulse.RunContext`**, `OnResult` hooks, `OnSnapshot` for per-interval callbacks, optional **`OnFabricEmit`** for **Fabric protobuf** (`RunEvent` + `RunCompleted` event), and **middleware** for chaos-style scenarios; **`RunT`** for `go test` integration. |
 | **Tooling** | Optional **`mockserver`** for local demos; see [`examples/`](examples/). |
 
@@ -149,6 +152,87 @@ The dashboard streams per-interval data via SSE and shows:
 - Current latency breakdown (min / P50 / P90 / P95 / P99 / max)
 
 The page reconnects automatically if the connection drops and shows a "Run complete" banner when the test finishes. The dashboard also works from the Go API via `Config.DashboardAddr` and `Config.OnSnapshot` (for custom per-interval callbacks).
+
+### Adaptive load shaping
+
+Enable real-time RPS auto-tuning for `constant` phases by setting `Config.Adaptive`. The engine observes each reporting interval and steps the arrival rate **down** when either threshold is exceeded, then gradually **steps up** when conditions recover.
+
+```go
+pulse.Run(pulse.Test{
+    Config: pulse.Config{
+        Reporting: pulse.ReportingConfig{Interval: 500 * time.Millisecond},
+        Adaptive: pulse.AdaptiveConfig{
+            MaxErrorRate: 0.05,            // step down above 5 % errors
+            MaxP99:       200 * time.Millisecond,
+            MinRPS:       10,
+            MaxRPS:       500,
+            StepDown:     0.9,             // multiply rate by 0.9 on violation
+            StepUp:       1.05,            // multiply rate by 1.05 on recovery
+        },
+        // ...
+    },
+})
+```
+
+`Adaptive` requires `Reporting.Interval > 0`. It only applies to `PhaseTypeConstant` phases; ramp, step, and spike phases run at their scheduled rates.
+
+### Chaos / fault injection
+
+Wrap any `http.RoundTripper` with `transport.NewChaosRoundTripper` to inject synthetic faults without modifying scenario code:
+
+```go
+chaos := transport.NewChaosRoundTripper(nil, transport.ChaosConfig{
+    ErrorRate:   0.05,                    // 5 % of requests return ErrChaosInjected
+    LatencyRate: 0.10,                    // 10 % of requests receive extra latency
+    Latency:     100 * time.Millisecond,
+})
+
+client := transport.NewHTTPClientWith(transport.HTTPClientConfig{Transport: chaos})
+```
+
+Error injection short-circuits before the request is forwarded. Latency injection adds a sleep before forwarding and respects context cancellation. Use `errors.Is(err, transport.ErrChaosInjected)` to identify injected failures in results.
+
+### Plugin reporters
+
+Implement `pulse.Reporter` to stream metrics to any external system:
+
+```go
+type Reporter interface {
+    OnSnapshot(Snapshot)           // called at each reporting interval
+    OnResult(Result, passed bool)  // called once after the run completes
+}
+```
+
+Wire one or more reporters via `Config.Reporters`:
+
+```go
+ctx := context.Background()
+pulse.Run(pulse.Test{
+    Config: pulse.Config{
+        Reporters: []pulse.Reporter{
+            reporter.NewPrometheusReporter(ctx, ":2112"),
+            reporter.NewInfluxDBReporter(reporter.InfluxDBConfig{
+                URL:    "http://localhost:8086",
+                Token:  os.Getenv("INFLUX_TOKEN"),
+                Org:    "myorg",
+                Bucket: "pulse",
+            }),
+            reporter.NewDatadogReporter(reporter.DatadogConfig{
+                Addr:      "localhost:8125",
+                Namespace: "myapp",
+                Tags:      []string{"env:prod"},
+            }),
+        },
+        // ...
+    },
+})
+```
+
+| Reporter | Protocol | Package |
+|----------|----------|---------|
+| `NewPrometheusReporter` | HTTP `/metrics` — Prometheus text exposition | `algoryn.io/pulse/reporter` |
+| `NewInfluxDBReporter` | HTTP — InfluxDB v2 line protocol (`/api/v2/write`) | `algoryn.io/pulse/reporter` |
+| `NewDatadogReporter` | UDP — DogStatsD datagrams | `algoryn.io/pulse/reporter` |
 
 **Mockserver modes**
 
