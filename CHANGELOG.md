@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **gRPC support** — `transport.NewGRPCClient(cfg GRPCClientConfig)` dials a gRPC server (insecure, system TLS, or custom TLS) and exposes `Conn() *grpc.ClientConn` for passing to generated client constructors; `transport.CallGRPC(fn func() error) (int, error)` wraps a gRPC call and maps the gRPC status code to an HTTP-equivalent integer so Pulse thresholds and error metrics work consistently across transports; all 17 gRPC codes are mapped
+
 - **Scenario chaining** — `pulse.Sequence(steps ...Scenario) Scenario` runs steps in order and stops on the first error, returning that step's status code; `pulse.Flow(steps ...Step) Scenario` does the same but wraps errors with the step name (`"login: unauthorized"`) for easier identification in result error maps; `pulse.Step{Name, Do}` pairs a name with a scenario function
 
 - **OpenTelemetry reporter** — `reporter.NewOTelReporter(provider metric.MeterProvider)` exports Pulse metrics as OTEL gauges (`pulse.rps`, `pulse.error_rate`, `pulse.latency.p50/p90/p95/p99`, `pulse.requests.total/failed`); the caller owns the provider and its exporter (OTLP, stdout, etc.), keeping transport decisions outside the reporter
