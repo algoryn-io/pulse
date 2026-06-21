@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Response assertions** — `transport.Response` type returned by the new `HTTPClient.DoWithResponse(ctx, method, url, body)` method; unlike `Do`, status >= 400 does not produce an error, giving callers full control via assertion helpers: `AssertStatus(resp, expected)`, `AssertBodyContains(resp, substr)`, `AssertBodyJSON(resp, &v)`, `AssertHeader(resp, key, expected)`; the body is pre-read into memory (up to `MaxResponseBytes`) so helpers can inspect it without draining
+
 - **Adaptive load shaping** — `Config.Adaptive` (`AdaptiveConfig`) enables real-time RPS auto-tuning for `PhaseTypeConstant` phases; the engine checks each reporting interval and multiplies the arrival rate by `StepDown` when `MaxErrorRate` or `MaxP99` is exceeded, and by `StepUp` when conditions recover; rate is clamped to `[MinRPS, MaxRPS]`; requires `Reporting.Interval > 0`
 - `scheduler.Phase.RateFunc func() float64` — optional per-tick rate override; when non-nil, the scheduler calls it before each token-bucket refill so external controllers (e.g. `adaptiveController`) can adjust arrival rate without restarting the phase
 - **Chaos / fault injection** — `transport.ChaosRoundTripper` wraps any `http.RoundTripper` and injects configurable synthetic faults: `ChaosConfig.ErrorRate` (fraction of requests that return `ErrChaosInjected` without forwarding) and `ChaosConfig.LatencyRate` + `ChaosConfig.Latency` (fraction of requests that receive an extra sleep before forwarding); error injection takes precedence over latency; latency sleep respects context cancellation; construct with `transport.NewChaosRoundTripper(inner, cfg)`; panics if rates are outside `[0, 1]`
