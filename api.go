@@ -185,6 +185,10 @@ type Config struct {
 	// PhaseTypeConstant phases based on observed error rate and P99 latency.
 	// Requires Reporting.Interval > 0.
 	Adaptive AdaptiveConfig
+	// Reporters is an optional list of metric exporters called on each snapshot
+	// interval and once after the run completes. Requires Reporting.Interval > 0
+	// for OnSnapshot to fire; OnResult is always called.
+	Reporters []Reporter
 }
 
 // Test is the root public input for a Pulse run.
@@ -245,6 +249,19 @@ type Snapshot struct {
 	Latency      LatencyStats
 	StatusCounts map[int]int64
 	ErrorCounts  map[string]int64
+}
+
+// Reporter receives metrics during and after a test run. Register reporters
+// via Config.Reporters to export live and final metrics to external systems
+// (Prometheus, InfluxDB, Datadog, …) without modifying core pulse logic.
+type Reporter interface {
+	// OnSnapshot is called at the end of each reporting interval with the
+	// metrics observed during that window. Called from a background goroutine;
+	// must not block.
+	OnSnapshot(snapshot Snapshot)
+	// OnResult is called once after the run completes with the full aggregated
+	// result and whether all configured thresholds passed.
+	OnResult(result Result, passed bool)
 }
 
 // ResultHook is an optional callback invoked after a test run completes.
@@ -323,6 +340,18 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 		fmt.Fprintf(os.Stderr, "Dashboard: http://%s\n", host)
 	}
 
+	// Compose reporters into the snapshot callback chain.
+	for _, rep := range test.Config.Reporters {
+		rep := rep
+		prev := userOnSnapshot
+		userOnSnapshot = func(s Snapshot) {
+			rep.OnSnapshot(s)
+			if prev != nil {
+				prev(s)
+			}
+		}
+	}
+
 	var onLiveSnapshot func(metrics.Snapshot)
 	if userOnSnapshot != nil {
 		onLiveSnapshot = func(s metrics.Snapshot) {
@@ -353,6 +382,10 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 
 	if dashOnDone != nil {
 		dashOnDone(result, passed)
+	}
+
+	for _, rep := range test.Config.Reporters {
+		rep.OnResult(result, passed)
 	}
 
 	if test.Config.OnFabricEmit != nil {
