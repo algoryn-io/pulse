@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Scenario chaining** — `pulse.Sequence(steps ...Scenario) Scenario` runs steps in order and stops on the first error, returning that step's status code; `pulse.Flow(steps ...Step) Scenario` does the same but wraps errors with the step name (`"login: unauthorized"`) for easier identification in result error maps; `pulse.Step{Name, Do}` pairs a name with a scenario function
+
 - **OpenTelemetry reporter** — `reporter.NewOTelReporter(provider metric.MeterProvider)` exports Pulse metrics as OTEL gauges (`pulse.rps`, `pulse.error_rate`, `pulse.latency.p50/p90/p95/p99`, `pulse.requests.total/failed`); the caller owns the provider and its exporter (OTLP, stdout, etc.), keeping transport decisions outside the reporter
 
 - **Env var interpolation in YAML** — `config.Load` now expands `${VAR}` and `${VAR:-default}` placeholders in YAML files before unmarshalling; unset required variables return a descriptive error naming the missing variable; useful for secrets (`${API_TOKEN}`), environment-specific URLs (`${BASE_URL}`), and CI overrides
