@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Configurable percentiles** — `pulse.Config.Percentiles []float64` (or a `percentiles:` YAML list, e.g. `[99.9, 99.99]`) computes additional latency percentiles for the final result alongside the always-reported P50/P90/P95/P99. Values appear in `Result.ExtraPercentiles` (keyed `"p99.9"`), in CLI text output, and in JSON under `extra_percentiles` (additive, JSON v1-compatible). Values must be in (0,100); the C++ histogram already supported arbitrary percentiles, this exposes them
+
 - **Cookie jar / sessions** — `transport.HTTPClient.Session()` returns a client that shares the base client's pooled transport but has its own fresh in-memory cookie jar, so each virtual-user iteration gets an isolated session (a login cookie set in one iteration is resent on later requests in that iteration, but never leaks to other concurrent iterations). `transport.HTTPClientConfig.Jar` allows attaching a custom `http.CookieJar` to the base client
 
 - **Threshold-abort / fail-fast** — `pulse.Config.Abort` (`AbortConfig{MaxErrorRate, MaxP99, MinRequests}`) stops a run early when a reporting interval breaches the configured error-rate or P99-latency limit; `RunContext` returns the partial result wrapped with `pulse.ErrAborted` (detect with `errors.Is`). Configurable in YAML via an `abort:` section. Requires `reporting.interval > 0`. The CLI prints the partial summary and a notice on abort

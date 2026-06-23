@@ -40,6 +40,7 @@ type fileConfig struct {
 	SaturationPolicy string           `yaml:"saturationPolicy"`
 	Thresholds       thresholdsConfig `yaml:"thresholds"`
 	Abort            abortConfig      `yaml:"abort"`
+	Percentiles      []float64        `yaml:"percentiles"`
 	Reporting        reportingConfig  `yaml:"reporting"`
 	Seed             *int64           `yaml:"seed"`
 	// Workers is an optional list of distributed worker addresses ("host:port").
@@ -172,6 +173,7 @@ func Load(path string) (pulse.Test, error) {
 			MaxP99:       cfg.Abort.MaxP99.Duration,
 			MinRequests:  cfg.Abort.MinRequests,
 		},
+		Percentiles: cfg.Percentiles,
 		Reporting: pulse.ReportingConfig{
 			Interval: cfg.Reporting.Interval.Duration,
 		},

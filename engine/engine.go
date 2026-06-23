@@ -33,6 +33,7 @@ type Engine struct {
 	onLiveSnapshot func(metrics.Snapshot)
 	adaptive       AdaptiveConfig
 	abort          AbortConfig
+	percentiles    []float64
 }
 
 // Options contains execution settings for Engine.
@@ -51,6 +52,9 @@ type Options struct {
 	// Abort, when non-zero, stops the run early (Run returns ErrAborted) when a
 	// reporting interval breaches a configured limit. Requires ReportInterval > 0.
 	Abort AbortConfig
+	// Percentiles lists additional latency percentiles (values in (0,100), e.g.
+	// 99.9) to compute for the final result, reported in Result.ExtraPercentiles.
+	Percentiles []float64
 }
 
 // New creates an engine for the given execution inputs.
@@ -84,6 +88,7 @@ func NewWithOptions(phases []scheduler.Phase, scenario func(context.Context) (in
 		onLiveSnapshot: options.OnLiveSnapshot,
 		adaptive:       options.Adaptive,
 		abort:          options.Abort,
+		percentiles:    options.Percentiles,
 	}
 }
 
@@ -99,7 +104,7 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 	defer runCancel()
 	var aborted atomic.Bool
 
-	aggregator := metrics.NewAggregator()
+	aggregator := metrics.NewAggregatorWithPercentiles(e.percentiles)
 	defer aggregator.Close()
 	startedAt := time.Now()
 	snapshots := newSnapshotCollector(startedAt, e.reportInterval)

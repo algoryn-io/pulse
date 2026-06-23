@@ -54,6 +54,36 @@ func TestRunContextAbortsAndReturnsErrAborted(t *testing.T) {
 	}
 }
 
+func TestValidateConfigRejectsOutOfRangePercentile(t *testing.T) {
+	for _, p := range []float64{0, 100, -1, 100.1} {
+		cfg := Config{
+			Phases:      []Phase{{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1}},
+			Percentiles: []float64{p},
+		}
+		if err := ValidateConfig(cfg); !errors.Is(err, errInvalidPercentile) {
+			t.Fatalf("percentile %v: expected errInvalidPercentile, got %v", p, err)
+		}
+	}
+}
+
+func TestRunContextReportsExtraPercentiles(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases:         []Phase{{Type: PhaseTypeConstant, Duration: 60 * time.Millisecond, ArrivalRate: 200}},
+			MaxConcurrency: 50,
+			Percentiles:    []float64{99.9},
+		},
+		Scenario: func(context.Context) (int, error) { return 200, nil },
+	}
+	result, err := RunContext(context.Background(), test)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if _, ok := result.ExtraPercentiles["p99.9"]; !ok {
+		t.Fatalf("expected p99.9 in ExtraPercentiles, got %v", result.ExtraPercentiles)
+	}
+}
+
 func TestRunReturnsErrorWhenNoPhases(t *testing.T) {
 	test := Test{
 		Scenario: func(context.Context) (int, error) { return 0, nil },
