@@ -674,7 +674,12 @@ func evaluateThresholds(thresholds Thresholds, result Result) ([]ThresholdOutcom
 // runDistributed fans out the test to the workers in test.Config.Workers and
 // merges their results. It does not execute any scenario locally.
 func runDistributed(ctx context.Context, test Test) (Result, error) {
-	c := coordinator.New(test.Config.Workers)
+	// The shared worker token is read from the environment (never from YAML) so
+	// it does not end up in version-controlled configs. It must match the token
+	// configured on each worker (PULSE_WORKER_TOKEN).
+	c := coordinator.NewWithOptions(test.Config.Workers, coordinator.Options{
+		AuthToken: os.Getenv("PULSE_WORKER_TOKEN"),
+	})
 
 	req := distributed.RunRequest{
 		Phases:           toDistributedPhases(test.Config.Phases),

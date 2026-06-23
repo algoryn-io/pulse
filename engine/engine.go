@@ -146,8 +146,19 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 	// snapshots and feed the adaptive controller.
 	if e.reportInterval > 0 && (e.onLiveSnapshot != nil || !e.adaptive.IsZero()) {
 		liveCtx, liveCancel := context.WithCancel(ctx)
-		defer liveCancel()
+		var liveWG sync.WaitGroup
+		liveWG.Add(1)
+		// Cancel and JOIN the live goroutine before the deferred
+		// snapshots.close()/aggregator.Close() run. This defer is registered
+		// after those cleanup defers, so it executes first (LIFO), guaranteeing
+		// the goroutine can never read a closed collector or a freed aggregator,
+		// and that no live-snapshot callback fires after Run returns.
+		defer func() {
+			liveCancel()
+			liveWG.Wait()
+		}()
 		go func() {
+			defer liveWG.Done()
 			ticker := time.NewTicker(e.reportInterval)
 			defer ticker.Stop()
 			for {

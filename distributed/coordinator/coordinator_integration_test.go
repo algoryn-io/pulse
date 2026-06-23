@@ -129,3 +129,58 @@ func TestCoordinator_SplitRates(t *testing.T) {
 		t.Errorf("Total < 0: %d", result.Total)
 	}
 }
+
+// startAuthWorker starts an authenticated worker on a random loopback port and
+// returns its address. The worker is shut down when ctx is cancelled.
+func startAuthWorker(t *testing.T, ctx context.Context, token string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	srv := worker.NewWithOptions(
+		func(_ context.Context) (int, error) { return 200, nil },
+		worker.Options{AuthToken: token},
+	)
+	go func() { _ = srv.ListenAndServe(ctx, addr) }()
+	return addr
+}
+
+// TestCoordinator_AuthTokenFlows verifies that a coordinator carrying the
+// matching token can reach an authenticated worker, while a coordinator with a
+// wrong/missing token is rejected.
+func TestCoordinator_AuthTokenFlows(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const token = "shared-secret"
+	addr := startAuthWorker(t, ctx, token)
+
+	// Matching token: Ping must eventually succeed once the worker is bound.
+	good := coordinator.NewWithOptions([]string{addr}, coordinator.Options{AuthToken: token})
+	var pingErr error
+	for range 20 {
+		if pingErr = good.Ping(ctx); pingErr == nil {
+			break
+		}
+	}
+	if pingErr != nil {
+		t.Fatalf("authenticated coordinator could not reach worker: %v", pingErr)
+	}
+
+	// Wrong token: Ping must fail with an authorization error (not a transient
+	// not-yet-bound error, since the good coordinator already confirmed binding).
+	bad := coordinator.NewWithOptions([]string{addr}, coordinator.Options{AuthToken: "wrong"})
+	if err := bad.Ping(ctx); err == nil {
+		t.Fatal("coordinator with wrong token should be rejected, got nil")
+	}
+
+	// No token at all: also rejected.
+	none := coordinator.New([]string{addr})
+	if err := none.Ping(ctx); err == nil {
+		t.Fatal("coordinator with no token should be rejected, got nil")
+	}
+}

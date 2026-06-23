@@ -19,19 +19,35 @@ import (
 
 // Coordinator fans out load-test runs to multiple workers and merges results.
 type Coordinator struct {
-	workers []string // "host:port" worker addresses
-	client  *http.Client
+	workers   []string // "host:port" worker addresses
+	client    *http.Client
+	authToken string
+}
+
+// Options configures a Coordinator.
+type Options struct {
+	// AuthToken, when non-empty, is sent to every worker as
+	// "Authorization: Bearer <token>". It must match the worker's configured
+	// token (see worker.Options.AuthToken).
+	AuthToken string
 }
 
 // New creates a Coordinator that will distribute runs to the given worker addresses.
 // Each address must be in "host:port" format.
 func New(workers []string) *Coordinator {
+	return NewWithOptions(workers, Options{})
+}
+
+// NewWithOptions creates a Coordinator with the given options, e.g. an auth
+// token shared with the worker fleet.
+func NewWithOptions(workers []string, opts Options) *Coordinator {
 	return &Coordinator{
 		workers: workers,
 		client: &http.Client{
 			// No global timeout — runs can take minutes. Context cancellation is used instead.
 			Timeout: 0,
 		},
+		authToken: opts.AuthToken,
 	}
 }
 
@@ -72,6 +88,7 @@ func (c *Coordinator) ping(ctx context.Context, addr string) error {
 	if err != nil {
 		return err
 	}
+	c.setAuth(req)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return err
@@ -131,6 +148,7 @@ func (c *Coordinator) runWorker(ctx context.Context, addr string, req distribute
 		return distributed.WorkerResult{}, fmt.Errorf("pulse coordinator: build request to %s: %w", addr, err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	c.setAuth(httpReq)
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
@@ -188,6 +206,13 @@ func splitRates(req distributed.RunRequest, n int) []distributed.RunRequest {
 		}
 	}
 	return reqs
+}
+
+// setAuth attaches the bearer token to req when one is configured.
+func (c *Coordinator) setAuth(req *http.Request) {
+	if c.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.authToken)
+	}
 }
 
 func workerURL(addr, path string) string {

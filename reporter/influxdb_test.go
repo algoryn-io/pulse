@@ -12,14 +12,20 @@ import (
 )
 
 func TestInfluxDBReporterOnSnapshotWritesLineProtocol(t *testing.T) {
-	var body string
-	var authHeader string
+	// OnSnapshot writes asynchronously, so the handler runs on a different
+	// goroutine. The done channel hands the captured request back to the test
+	// with a happens-before edge (channel send/receive), avoiding both a data
+	// race and a flaky time.Sleep.
+	type captured struct {
+		body string
+		auth string
+	}
+	done := make(chan captured, 1)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		body = string(b)
-		authHeader = r.Header.Get("Authorization")
 		w.WriteHeader(http.StatusNoContent)
+		done <- captured{body: string(b), auth: r.Header.Get("Authorization")}
 	}))
 	defer srv.Close()
 
@@ -42,8 +48,14 @@ func TestInfluxDBReporterOnSnapshotWritesLineProtocol(t *testing.T) {
 		},
 	})
 
-	// Wait for async goroutine
-	time.Sleep(50 * time.Millisecond)
+	var got captured
+	select {
+	case got = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for async snapshot write")
+	}
+	body := got.body
+	authHeader := got.auth
 
 	if !strings.Contains(body, "pulse,type=snapshot") {
 		t.Fatalf("expected line protocol measurement, got %q", body)

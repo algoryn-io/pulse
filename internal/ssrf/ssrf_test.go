@@ -1,7 +1,9 @@
 package ssrf
 
 import (
+	"context"
 	"errors"
+	"net"
 	"testing"
 )
 
@@ -44,6 +46,72 @@ func TestPolicyCheckBlocksPrivateIPLiterals(t *testing.T) {
 		if !errors.Is(err, ErrBlocked) {
 			t.Errorf("expected ErrBlocked for %q, got %v", u, err)
 		}
+	}
+}
+
+func TestPolicyCheckBlocksIPv4MappedIPv6(t *testing.T) {
+	p := DefaultDenyPrivatePolicy()
+	// IPv4-mapped IPv6 literals must be normalized to their IPv4 form before
+	// matching, otherwise they bypass IPv4 CIDRs like 127.0.0.0/8 and the
+	// cloud-metadata range.
+	blocked := []string{
+		"http://[::ffff:127.0.0.1]/secret",
+		"http://[::ffff:169.254.169.254]/latest/meta-data/",
+		"http://[::ffff:10.0.0.1]/internal",
+	}
+	for _, u := range blocked {
+		err := p.Check(u)
+		if !errors.Is(err, ErrBlocked) {
+			t.Errorf("expected %q to be blocked, got %v", u, err)
+		}
+	}
+}
+
+func TestIPBlocked(t *testing.T) {
+	cases := []struct {
+		ip   string
+		want bool
+	}{
+		{"127.0.0.1", true},
+		{"::1", true},
+		{"10.1.2.3", true},
+		{"169.254.169.254", true},
+		{"::ffff:127.0.0.1", true}, // IPv4-mapped loopback
+		{"0.0.0.0", true},          // unspecified
+		{"fe80::1", true},          // link-local
+		{"8.8.8.8", false},
+		{"1.1.1.1", false},
+		{"2606:4700:4700::1111", false}, // public IPv6
+	}
+	for _, c := range cases {
+		ip := net.ParseIP(c.ip)
+		if ip == nil {
+			t.Fatalf("bad test IP %q", c.ip)
+		}
+		if got := ipBlocked(ip); got != c.want {
+			t.Errorf("ipBlocked(%s) = %v, want %v", c.ip, got, c.want)
+		}
+	}
+}
+
+func TestDialContextBlocksPrivateLiteral(t *testing.T) {
+	p := DefaultDenyPrivatePolicy()
+	dial := p.DialContext(nil)
+	_, err := dial(context.Background(), "tcp", "127.0.0.1:80")
+	if !errors.Is(err, ErrBlocked) {
+		t.Fatalf("expected dial to a private literal to be blocked, got %v", err)
+	}
+}
+
+func TestDialContextPassthroughWhenDisabled(t *testing.T) {
+	p := Policy{DenyPrivate: false}
+	dial := p.DialContext(nil)
+	// With the policy disabled the dialer must not reject the address on policy
+	// grounds; a connection-refused style error (or success) is acceptable, an
+	// ErrBlocked is not.
+	_, err := dial(context.Background(), "tcp", "127.0.0.1:1")
+	if errors.Is(err, ErrBlocked) {
+		t.Fatalf("disabled policy must not block, got %v", err)
 	}
 }
 

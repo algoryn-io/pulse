@@ -19,6 +19,7 @@ package worker
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,10 +32,31 @@ import (
 
 	"algoryn.io/pulse/distributed"
 	"algoryn.io/pulse/engine"
+	"algoryn.io/pulse/internal/ssrf"
 	"algoryn.io/pulse/model"
 	"algoryn.io/pulse/scheduler"
 	"algoryn.io/pulse/transport"
 )
+
+// maxRequestBytes caps the size of a RunRequest body to defend against memory
+// exhaustion from an oversized or streamed POST. RunRequests are small (phases
+// plus an optional HTTP scenario), so 1 MiB is generous.
+const maxRequestBytes = 1 << 20
+
+// Options configures security and execution behaviour of a worker Server.
+type Options struct {
+	// AuthToken, when non-empty, is required on every request via the
+	// "Authorization: Bearer <token>" header. Requests without a matching token
+	// are rejected with 401. When empty, the worker accepts unauthenticated
+	// requests (suitable only for a fully trusted, private network).
+	AuthToken string
+
+	// DenyPrivate, when true, applies an SSRF policy to scenarios the worker
+	// builds from a RunRequest: requests to private, loopback, link-local, and
+	// cloud-metadata ranges are rejected at dial time. Leave false when the
+	// worker is intentionally load-testing internal services.
+	DenyPrivate bool
+}
 
 // Server is a Pulse distributed worker. It accepts RunRequests from a
 // coordinator over HTTP and executes the load test locally.
@@ -42,12 +64,21 @@ type Server struct {
 	// scenario is the pre-registered scenario for library mode. When nil,
 	// the server builds an HTTP scenario from RunRequest.HTTPScenario.
 	scenario func(context.Context) (int, error)
+	opts     Options
 }
 
-// New creates a worker server. Pass a non-nil scenario for library mode;
-// pass nil for CLI mode (scenario is derived from each RunRequest).
+// New creates a worker server with default options (no authentication, no SSRF
+// policy). Pass a non-nil scenario for library mode; pass nil for CLI mode
+// (scenario is derived from each RunRequest).
 func New(scenario func(context.Context) (int, error)) *Server {
-	return &Server{scenario: scenario}
+	return NewWithOptions(scenario, Options{})
+}
+
+// NewWithOptions creates a worker server with the given options. Use this to
+// require an auth token and/or enable the SSRF policy on a worker that is
+// reachable from an untrusted network.
+func NewWithOptions(scenario func(context.Context) (int, error), opts Options) *Server {
+	return &Server{scenario: scenario, opts: opts}
 }
 
 // ListenAndServe starts the worker HTTP server on addr and blocks until ctx
@@ -60,6 +91,12 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: mux,
+		// Defensive timeouts so a slow or idle client cannot tie up the worker
+		// (slowloris). A run can take minutes, so WriteTimeout is intentionally
+		// left at zero; cancellation is driven by ctx instead.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	ln, err := net.Listen("tcp", addr)
@@ -86,9 +123,29 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	}
 }
 
+// authorized reports whether the request carries the configured bearer token.
+// When no token is configured every request is authorized. The comparison is
+// constant-time to avoid leaking the token via timing.
+func (s *Server) authorized(r *http.Request) bool {
+	if s.opts.AuthToken == "" {
+		return true
+	}
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, prefix) {
+		return false
+	}
+	got := h[len(prefix):]
+	return subtle.ConstantTimeCompare([]byte(got), []byte(s.opts.AuthToken)) == 1
+}
+
 func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	writeJSON(w, distributed.PingResponse{Status: "ok"}, http.StatusOK)
@@ -99,8 +156,13 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 
 	var req distributed.RunRequest
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("invalid request: %v", err), http.StatusBadRequest)
 		return
@@ -167,14 +229,19 @@ func (s *Server) resolveScenario(httpCfg *distributed.HTTPScenario) (func(contex
 	if httpCfg == nil {
 		return nil, fmt.Errorf("pulse worker: no scenario registered and RunRequest.HTTPScenario is nil")
 	}
-	return buildHTTPScenario(httpCfg), nil
+	return s.buildHTTPScenario(httpCfg), nil
 }
 
 // buildHTTPScenario constructs a scenario function from an HTTPScenario config.
-func buildHTTPScenario(cfg *distributed.HTTPScenario) func(context.Context) (int, error) {
-	client := transport.NewHTTPClientWith(transport.HTTPClientConfig{
-		Headers: cfg.Headers,
-	})
+// When Options.DenyPrivate is set, the client dials through an SSRF-validating
+// transport so a malicious RunRequest cannot drive the worker against private
+// or cloud-metadata endpoints.
+func (s *Server) buildHTTPScenario(cfg *distributed.HTTPScenario) func(context.Context) (int, error) {
+	clientCfg := transport.HTTPClientConfig{Headers: cfg.Headers}
+	if s.opts.DenyPrivate {
+		clientCfg.Transport = ssrf.NewSafeTransport(ssrf.DefaultDenyPrivatePolicy(), nil)
+	}
+	client := transport.NewHTTPClientWith(clientCfg)
 	method := strings.ToUpper(cfg.Method)
 	if method == "" {
 		method = http.MethodGet
