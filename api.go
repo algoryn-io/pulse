@@ -180,6 +180,11 @@ type Config struct {
 	// merges their results. Workers must be started with ListenAsWorker.
 	// For single-node runs (the default), leave Workers nil or empty.
 	Workers []string
+	// WorkerWeights optionally assigns a relative capacity to each worker, in the
+	// same order as Workers. Arrival rate and concurrency are split
+	// proportionally (e.g. {2,1} sends a 2:1 share to the first worker). When
+	// empty or mismatched in length, workers are weighted equally.
+	WorkerWeights []int
 	// DistributedHTTPScenario, when non-nil, is forwarded to workers in the
 	// RunRequest so CLI workers can build the HTTP scenario from config.
 	// Populated by config.Load() from the YAML target section.
@@ -726,6 +731,7 @@ func runDistributed(ctx context.Context, test Test) (Result, error) {
 	// configured on each worker (PULSE_WORKER_TOKEN).
 	c := coordinator.NewWithOptions(test.Config.Workers, coordinator.Options{
 		AuthToken: os.Getenv("PULSE_WORKER_TOKEN"),
+		Weights:   test.Config.WorkerWeights,
 	})
 
 	req := distributed.RunRequest{

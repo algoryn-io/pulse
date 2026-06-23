@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,6 +24,7 @@ type Coordinator struct {
 	workers   []string // "host:port" worker addresses
 	client    *http.Client
 	authToken string
+	weights   []int // per-worker capacity weights; nil means equal weighting
 }
 
 // Options configures a Coordinator.
@@ -30,6 +33,13 @@ type Options struct {
 	// "Authorization: Bearer <token>". It must match the worker's configured
 	// token (see worker.Options.AuthToken).
 	AuthToken string
+
+	// Weights optionally assigns a relative capacity to each worker, in the same
+	// order as the worker addresses. Arrival rate and concurrency are split
+	// proportionally (e.g. weights {2,1} send a 2:1 share to the first worker).
+	// When nil, or when its length does not match the worker count, or when any
+	// value is non-positive, all workers are weighted equally.
+	Weights []int
 }
 
 // New creates a Coordinator that will distribute runs to the given worker addresses.
@@ -48,7 +58,25 @@ func NewWithOptions(workers []string, opts Options) *Coordinator {
 			Timeout: 0,
 		},
 		authToken: opts.AuthToken,
+		weights:   normalizeWeights(opts.Weights, len(workers)),
 	}
+}
+
+// normalizeWeights returns a valid per-worker weight slice of length n. It
+// returns nil (meaning "equal weighting") when the supplied weights are absent,
+// the wrong length, or contain a non-positive value.
+func normalizeWeights(weights []int, n int) []int {
+	if len(weights) != n {
+		return nil
+	}
+	for _, w := range weights {
+		if w <= 0 {
+			return nil
+		}
+	}
+	out := make([]int, n)
+	copy(out, weights)
+	return out
 }
 
 // Ping checks that all workers are reachable and returns an error listing any
@@ -101,16 +129,18 @@ func (c *Coordinator) ping(ctx context.Context, addr string) error {
 }
 
 // Run fans out req to all workers concurrently, waits for all to complete, and
-// returns the merged metrics.Result. If any worker fails, the first error is
-// returned alongside any partial results from workers that succeeded.
+// returns the merged metrics.Result. Arrival rate and concurrency are split
+// across workers proportionally to their configured weights (equal by default).
+// If any worker fails, the merged result reflects only the workers that
+// succeeded and the returned error joins every worker failure so none are
+// hidden.
 func (c *Coordinator) Run(ctx context.Context, req distributed.RunRequest) (metrics.Result, error) {
 	type outcome struct {
 		result distributed.WorkerResult
 		err    error
 	}
 
-	// Distribute arrival rates evenly; remainder goes to the first worker.
-	reqs := splitRates(req, len(c.workers))
+	reqs := splitRates(req, c.weights, len(c.workers))
 
 	ch := make(chan outcome, len(c.workers))
 	for i, addr := range c.workers {
@@ -121,20 +151,24 @@ func (c *Coordinator) Run(ctx context.Context, req distributed.RunRequest) (metr
 	}
 
 	var results []distributed.WorkerResult
-	var firstErr error
+	var errs []error
 	for range c.workers {
 		o := <-ch
 		if o.err != nil {
-			if firstErr == nil {
-				firstErr = o.err
-			}
+			errs = append(errs, o.err)
 		} else {
 			results = append(results, o.result)
 		}
 	}
 
 	merged := merger.Merge(results)
-	return merged, firstErr
+	if len(errs) > 0 {
+		// Prefix a summary so callers can see how much of the fleet failed
+		// before the individual errors.
+		summary := fmt.Errorf("pulse coordinator: %d of %d workers failed", len(errs), len(c.workers))
+		return merged, errors.Join(append([]error{summary}, errs...)...)
+	}
+	return merged, nil
 }
 
 func (c *Coordinator) runWorker(ctx context.Context, addr string, req distributed.RunRequest) (distributed.WorkerResult, error) {
@@ -167,32 +201,48 @@ func (c *Coordinator) runWorker(ctx context.Context, addr string, req distribute
 	return result, nil
 }
 
-// splitRates returns one RunRequest per worker. Each worker gets total/N
-// arrival rate per phase; the first worker absorbs the remainder from integer
-// division so the exact total rate is preserved.
-func splitRates(req distributed.RunRequest, n int) []distributed.RunRequest {
+// splitRates returns one RunRequest per worker. Arrival rate, ramp endpoints,
+// and concurrency are divided across workers proportionally to weights (equal
+// weighting when weights is nil) using the largest-remainder method, so the
+// exact total is preserved and any remainder is spread fairly across workers
+// rather than dumped on the first one.
+func splitRates(req distributed.RunRequest, weights []int, n int) []distributed.RunRequest {
 	if n <= 0 {
 		return nil
 	}
+	if weights == nil {
+		weights = make([]int, n)
+		for i := range weights {
+			weights[i] = 1
+		}
+	}
+
+	maxConc := splitInt(req.MaxConcurrency, weights)
+
+	// Pre-split each phase field across workers so every worker's slice is built
+	// from the same proportional division.
+	type phaseSplit struct {
+		arrival, from, to []int
+	}
+	splits := make([]phaseSplit, len(req.Phases))
+	for j, p := range req.Phases {
+		splits[j] = phaseSplit{
+			arrival: splitInt(p.ArrivalRate, weights),
+			from:    splitInt(p.From, weights),
+			to:      splitInt(p.To, weights),
+		}
+	}
+
 	reqs := make([]distributed.RunRequest, n)
 	for i := range reqs {
 		phases := make([]distributed.Phase, len(req.Phases))
 		for j, p := range req.Phases {
-			base := p.ArrivalRate / n
-			from := p.From / n
-			to := p.To / n
-			if i == 0 {
-				// First worker gets the remainder.
-				base += p.ArrivalRate % n
-				from += p.From % n
-				to += p.To % n
-			}
 			phases[j] = distributed.Phase{
 				Type:          p.Type,
 				Duration:      p.Duration,
-				ArrivalRate:   base,
-				From:          from,
-				To:            to,
+				ArrivalRate:   splits[j].arrival[i],
+				From:          splits[j].from[i],
+				To:            splits[j].to[i],
 				Steps:         p.Steps,
 				SpikeAt:       p.SpikeAt,
 				SpikeDuration: p.SpikeDuration,
@@ -200,12 +250,57 @@ func splitRates(req distributed.RunRequest, n int) []distributed.RunRequest {
 		}
 		reqs[i] = distributed.RunRequest{
 			Phases:           phases,
-			MaxConcurrency:   req.MaxConcurrency / n,
+			MaxConcurrency:   maxConc[i],
 			SaturationPolicy: req.SaturationPolicy,
 			HTTPScenario:     req.HTTPScenario,
 		}
 	}
 	return reqs
+}
+
+// splitInt divides total across len(weights) buckets proportionally to weights
+// using the largest-remainder (Hamilton) method: each bucket gets the floor of
+// its proportional share, and the leftover units (total minus the sum of floors)
+// are handed out one each to the buckets with the largest fractional remainders.
+// The returned slice always sums to total. With equal weights this spreads the
+// remainder across the first buckets instead of concentrating it on one.
+func splitInt(total int, weights []int) []int {
+	n := len(weights)
+	out := make([]int, n)
+	if n == 0 || total <= 0 {
+		return out
+	}
+	sum := 0
+	for _, w := range weights {
+		sum += w
+	}
+	if sum <= 0 {
+		return out
+	}
+
+	remainders := make([]int, n) // fractional parts scaled by sum
+	assigned := 0
+	for i, w := range weights {
+		share := total * w
+		out[i] = share / sum
+		remainders[i] = share % sum
+		assigned += out[i]
+	}
+
+	// Order indices by remainder descending, ties broken by lower index, then
+	// give one leftover unit to each of the first `leftover` indices.
+	order := make([]int, n)
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		return remainders[order[a]] > remainders[order[b]]
+	})
+	leftover := total - assigned
+	for k := 0; k < leftover && k < n; k++ {
+		out[order[k]]++
+	}
+	return out
 }
 
 // setAuth attaches the bearer token to req when one is configured.

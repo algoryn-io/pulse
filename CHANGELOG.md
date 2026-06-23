@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Capacity-aware distributed split** — `pulse.Config.WorkerWeights []int` (or `workerWeights:` in YAML; `coordinator.Options.Weights`) splits arrival rate and concurrency across workers proportionally to their relative capacity (e.g. `{2,1}` sends a 2:1 share). When unset, workers are weighted equally
+
 - **Configurable percentiles** — `pulse.Config.Percentiles []float64` (or a `percentiles:` YAML list, e.g. `[99.9, 99.99]`) computes additional latency percentiles for the final result alongside the always-reported P50/P90/P95/P99. Values appear in `Result.ExtraPercentiles` (keyed `"p99.9"`), in CLI text output, and in JSON under `extra_percentiles` (additive, JSON v1-compatible). Values must be in (0,100); the C++ histogram already supported arbitrary percentiles, this exposes them
 
 - **Cookie jar / sessions** — `transport.HTTPClient.Session()` returns a client that shares the base client's pooled transport but has its own fresh in-memory cookie jar, so each virtual-user iteration gets an isolated session (a login cookie set in one iteration is resent on later requests in that iteration, but never leaks to other concurrent iterations). `transport.HTTPClientConfig.Jar` allows attaching a custom `http.CookieJar` to the base client
@@ -40,6 +42,8 @@ All notable changes to this project will be documented in this file.
 - **Response assertions** — `transport.Response` type returned by the new `HTTPClient.DoWithResponse(ctx, method, url, body)` method; unlike `Do`, status >= 400 does not produce an error, giving callers full control via assertion helpers: `AssertStatus(resp, expected)`, `AssertBodyContains(resp, substr)`, `AssertBodyJSON(resp, &v)`, `AssertHeader(resp, key, expected)`; the body is pre-read into memory (up to `MaxResponseBytes`) so helpers can inspect it without draining
 
 ### Changed
+
+- **Distributed rate split & failure reporting** — the coordinator now divides arrival rate and concurrency using the largest-remainder method, so any integer remainder is spread fairly across workers instead of being dumped on the first worker. When workers fail, `Run` now joins **every** worker error (prefixed with an `N of M workers failed` summary) instead of returning only the first, while still merging the successful workers' results
 
 - **CI lint** — CI now runs `golangci-lint` (pinned `@v2.6.0`; config in `.golangci.yml` covering errcheck/govet/ineffassign/staticcheck/unused) and `go test -race`. Pre-existing lint findings were fixed, including a dead overflow guard in `metrics.nsToDuration` and a stale unused type in the dashboard server
 

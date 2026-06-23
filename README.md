@@ -185,7 +185,11 @@ export PULSE_WORKER_TOKEN=...   # same token as the workers
 pulse run config.yaml --workers 10.0.0.1:9100,10.0.0.2:9100
 ```
 
-The coordinator splits each phase's arrival rate and `maxConcurrency` evenly across workers (the first worker absorbs any integer remainder), pings all workers before starting, fans out the run, and merges the results. Thresholds and JSON/JUnit output behave exactly as in single-node mode. From the Go API, set `Config.Workers` (coordinator) and serve with `worker.NewWithOptions(...)`.
+The coordinator splits each phase's arrival rate and `maxConcurrency` across workers (using the largest-remainder method, so any remainder is spread fairly rather than dumped on the first worker), pings all workers before starting, fans out the run, and merges the results. Thresholds and JSON/JUnit output behave exactly as in single-node mode. From the Go API, set `Config.Workers` (coordinator) and serve with `worker.NewWithOptions(...)`.
+
+For a heterogeneous fleet, assign relative capacities with `workerWeights:` (YAML) or `Config.WorkerWeights` (Go), in the same order as the workers — e.g. `workerWeights: [3, 1]` sends a 3:1 share to the first worker. When omitted, all workers are weighted equally.
+
+If a worker is unreachable or fails mid-run, the coordinator still merges the results from the workers that succeeded and returns an error that joins **all** worker failures (prefixed with an `N of M workers failed` summary), so a partial run is never silently reported as complete.
 
 #### Security
 
