@@ -47,6 +47,9 @@ type fileConfig struct {
 	// When set, `pulse run` fans out the load test to these workers instead of
 	// executing locally. Workers must be running `pulse worker --addr <addr>`.
 	Workers []string `yaml:"workers"`
+	// WorkerWeights optionally assigns a relative capacity to each worker, in the
+	// same order as Workers. When empty, workers are weighted equally.
+	WorkerWeights []int `yaml:"workerWeights"`
 }
 
 type phaseConfig struct {
@@ -177,7 +180,8 @@ func Load(path string) (pulse.Test, error) {
 		Reporting: pulse.ReportingConfig{
 			Interval: cfg.Reporting.Interval.Duration,
 		},
-		Workers: cfg.Workers,
+		Workers:       cfg.Workers,
+		WorkerWeights: cfg.WorkerWeights,
 		// Always populate DistributedHTTPScenario so that distributed runs
 		// (workers: [...] in YAML or --workers on CLI) can forward the target
 		// to CLI workers that have no pre-registered scenario.

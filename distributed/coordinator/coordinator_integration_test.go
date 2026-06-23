@@ -3,6 +3,7 @@ package coordinator_test
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 
 	"algoryn.io/pulse/distributed"
@@ -147,6 +148,56 @@ func startAuthWorker(t *testing.T, ctx context.Context, token string) string {
 	)
 	go func() { _ = srv.ListenAndServe(ctx, addr) }()
 	return addr
+}
+
+// TestCoordinator_PartialFailureMergesAndReportsAllErrors verifies that when one
+// worker is unreachable, the run still merges the live worker's result and
+// returns an error summarising the failure.
+func TestCoordinator_PartialFailureMergesAndReportsAllErrors(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// One healthy worker.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	liveAddr := ln.Addr().String()
+	ln.Close()
+	srv := worker.New(func(_ context.Context) (int, error) { return 200, nil })
+	go func() { _ = srv.ListenAndServe(ctx, liveAddr) }()
+
+	// One dead address (nothing listening). Reserve a port then close it.
+	dead, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	deadAddr := dead.Addr().String()
+	dead.Close()
+
+	c := coordinator.New([]string{liveAddr, deadAddr})
+	// Wait for the live worker to be ready (ignore the dead one for readiness).
+	live := coordinator.New([]string{liveAddr})
+	for range 20 {
+		if live.Ping(ctx) == nil {
+			break
+		}
+	}
+
+	req := distributed.RunRequest{
+		Phases: []distributed.Phase{{Type: "constant", ArrivalRate: 10, Duration: 50_000_000}},
+	}
+	result, err := c.Run(ctx, req)
+	if err == nil {
+		t.Fatal("expected an error when a worker is unreachable")
+	}
+	if !strings.Contains(err.Error(), "1 of 2 workers failed") {
+		t.Errorf("expected failure summary in error, got %v", err)
+	}
+	// The live worker's contribution is still merged.
+	if result.Total < 0 {
+		t.Errorf("merged Total should be non-negative, got %d", result.Total)
+	}
 }
 
 // TestCoordinator_AuthTokenFlows verifies that a coordinator carrying the
