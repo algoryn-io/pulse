@@ -39,6 +39,8 @@ type fileConfig struct {
 	MaxConcurrency   int              `yaml:"maxConcurrency"`
 	SaturationPolicy string           `yaml:"saturationPolicy"`
 	Thresholds       thresholdsConfig `yaml:"thresholds"`
+	Abort            abortConfig      `yaml:"abort"`
+	Percentiles      []float64        `yaml:"percentiles"`
 	Reporting        reportingConfig  `yaml:"reporting"`
 	Seed             *int64           `yaml:"seed"`
 	// Workers is an optional list of distributed worker addresses ("host:port").
@@ -75,6 +77,14 @@ type thresholdsConfig struct {
 	MaxP95Latency  duration `yaml:"maxP95Latency"`
 	MaxP99Latency  duration `yaml:"maxP99Latency"`
 	MaxDroppedRate float64  `yaml:"maxDroppedRate"`
+}
+
+// abortConfig configures fail-fast: stop the run early when a reporting
+// interval breaches a limit. Requires reporting.interval > 0.
+type abortConfig struct {
+	MaxErrorRate float64  `yaml:"maxErrorRate"`
+	MaxP99       duration `yaml:"maxP99"`
+	MinRequests  int64    `yaml:"minRequests"`
 }
 
 type reportingConfig struct {
@@ -158,6 +168,12 @@ func Load(path string) (pulse.Test, error) {
 			MaxP99Latency:  cfg.Thresholds.MaxP99Latency.Duration,
 			MaxDroppedRate: cfg.Thresholds.MaxDroppedRate,
 		},
+		Abort: pulse.AbortConfig{
+			MaxErrorRate: cfg.Abort.MaxErrorRate,
+			MaxP99:       cfg.Abort.MaxP99.Duration,
+			MinRequests:  cfg.Abort.MinRequests,
+		},
+		Percentiles: cfg.Percentiles,
 		Reporting: pulse.ReportingConfig{
 			Interval: cfg.Reporting.Interval.Duration,
 		},

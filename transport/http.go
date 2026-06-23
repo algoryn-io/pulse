@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"time"
 )
 
@@ -51,6 +52,13 @@ type HTTPClientConfig struct {
 	// overhead without the benefit of connection reuse.
 	// Ignored when Transport is set.
 	DisableKeepAlives bool
+
+	// Jar is an optional cookie jar attached to the client. When set, cookies
+	// from responses are stored and resent on subsequent requests made through
+	// the same client. For per-virtual-user sessions (independent cookies per
+	// scenario invocation), prefer calling Session() inside the scenario rather
+	// than sharing one jar across all concurrent invocations.
+	Jar http.CookieJar
 }
 
 // HTTPClient is the minimal HTTP transport for Pulse scenarios.
@@ -74,7 +82,7 @@ func NewHTTPClientWith(cfg HTTPClientConfig) *HTTPClient {
 	if cfg.MaxResponseBytes <= 0 {
 		cfg.MaxResponseBytes = DefaultMaxResponseBytes
 	}
-	httpClient := &http.Client{Timeout: cfg.Timeout}
+	httpClient := &http.Client{Timeout: cfg.Timeout, Jar: cfg.Jar}
 	switch {
 	case cfg.Transport != nil:
 		httpClient.Transport = cfg.Transport
@@ -95,6 +103,35 @@ func NewHTTPClientWith(cfg HTTPClientConfig) *HTTPClient {
 		client:           httpClient,
 		headers:          cloneHeaderMap(cfg.Headers),
 		maxResponseBytes: cfg.MaxResponseBytes,
+	}
+}
+
+// Session returns a new HTTPClient that shares this client's underlying
+// transport (so the connection pool and TLS settings are reused) but has its
+// own fresh in-memory cookie jar. Call it at the start of a scenario to give
+// each virtual-user iteration an isolated session: cookies set during the
+// iteration (e.g. a login response) are resent on later requests in the same
+// iteration, but are not shared with other concurrent iterations.
+//
+//	base := transport.NewHTTPClientWith(cfg) // shared, pooled transport
+//	scenario := func(ctx context.Context) (int, error) {
+//	    s := base.Session()
+//	    if _, err := s.Do(ctx, http.MethodPost, loginURL, body); err != nil {
+//	        return 0, err
+//	    }
+//	    return s.Do(ctx, http.MethodGet, profileURL, nil) // sends the login cookie
+//	}
+func (c *HTTPClient) Session() *HTTPClient {
+	jar, _ := cookiejar.New(nil) // error is always nil for nil options
+	sessionClient := &http.Client{
+		Transport: c.client.Transport,
+		Timeout:   c.client.Timeout,
+		Jar:       jar,
+	}
+	return &HTTPClient{
+		client:           sessionClient,
+		headers:          c.headers,
+		maxResponseBytes: c.maxResponseBytes,
 	}
 }
 

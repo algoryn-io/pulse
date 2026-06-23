@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"math"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,6 +29,10 @@ type Result struct {
 	StatusCounts map[int]int64
 	ErrorCounts  map[string]int64
 	Snapshots    []Snapshot
+	// ExtraPercentiles holds additional latency percentiles requested via
+	// configuration, keyed by label (e.g. "p99.9"). Nil when none were
+	// requested. The standard P50/P90/P95/P99 always live in Latency.
+	ExtraPercentiles map[string]time.Duration
 	// Buckets contains the raw histogram bucket counts (stats.NumBuckets = 800 values).
 	// Populated by Aggregator.Result() for use by distributed coordinators that need
 	// to merge per-worker histograms before computing cross-worker percentiles.
@@ -68,15 +73,30 @@ type Aggregator struct {
 	maxLatency   time.Duration
 	statusCounts map[int]int64
 	errorCounts  map[string]int64
+	percentiles  []float64 // extra percentiles to report, in (0,100)
 }
 
 // NewAggregator creates an empty metrics aggregator and allocates the native
 // stats engine used for low-memory percentile estimates.
 func NewAggregator() *Aggregator {
+	return NewAggregatorWithPercentiles(nil)
+}
+
+// NewAggregatorWithPercentiles is like NewAggregator but also computes the given
+// extra percentiles (values in (0,100), e.g. 99.9) in Result.ExtraPercentiles.
+// Out-of-range values are ignored.
+func NewAggregatorWithPercentiles(percentiles []float64) *Aggregator {
+	var ps []float64
+	for _, p := range percentiles {
+		if p > 0 && p < 100 {
+			ps = append(ps, p)
+		}
+	}
 	return &Aggregator{
 		engine:       stats.NewEngine(),
 		statusCounts: make(map[int]int64),
 		errorCounts:  make(map[string]int64),
+		percentiles:  ps,
 	}
 }
 
@@ -140,11 +160,25 @@ func (a *Aggregator) Result(duration time.Duration) Result {
 		P99:  clampDuration(nsToDuration(a.engine.GetPercentile(99)), a.minLatency, a.maxLatency),
 	}
 
+	if len(a.percentiles) > 0 {
+		extra := make(map[string]time.Duration, len(a.percentiles))
+		for _, p := range a.percentiles {
+			extra[PercentileLabel(p)] = clampDuration(nsToDuration(a.engine.GetPercentile(p)), a.minLatency, a.maxLatency)
+		}
+		result.ExtraPercentiles = extra
+	}
+
 	result.StatusCounts = copyInt64MapByInt(a.statusCounts)
 	result.ErrorCounts = copyInt64MapByString(a.errorCounts)
 	result.Buckets = a.engine.ExportBuckets()
 
 	return result
+}
+
+// PercentileLabel formats a percentile value as a stable map key, e.g. 99 → "p99"
+// and 99.9 → "p99.9".
+func PercentileLabel(p float64) string {
+	return "p" + strconv.FormatFloat(p, 'f', -1, 64)
 }
 
 // Close releases the C++ stats engine. Safe to call more than once. Do not

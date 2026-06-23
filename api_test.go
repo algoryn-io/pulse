@@ -9,6 +9,81 @@ import (
 	fabricv1 "algoryn.io/fabric/gen/go/fabric/v1"
 )
 
+func TestValidateConfigRejectsAbortWithoutInterval(t *testing.T) {
+	cfg := Config{
+		Phases: []Phase{{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1}},
+		Abort:  AbortConfig{MaxErrorRate: 0.5},
+		// Reporting.Interval intentionally left zero.
+	}
+	if err := ValidateConfig(cfg); !errors.Is(err, errAbortRequiresInterval) {
+		t.Fatalf("expected errAbortRequiresInterval, got %v", err)
+	}
+}
+
+func TestValidateConfigRejectsAbortInvalidErrorRate(t *testing.T) {
+	cfg := Config{
+		Phases:    []Phase{{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1}},
+		Reporting: ReportingConfig{Interval: 100 * time.Millisecond},
+		Abort:     AbortConfig{MaxErrorRate: 1.5},
+	}
+	if err := ValidateConfig(cfg); !errors.Is(err, errAbortInvalidErrorRate) {
+		t.Fatalf("expected errAbortInvalidErrorRate, got %v", err)
+	}
+}
+
+func TestRunContextAbortsAndReturnsErrAborted(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases:         []Phase{{Type: PhaseTypeConstant, Duration: 5 * time.Second, ArrivalRate: 200}},
+			MaxConcurrency: 100,
+			Reporting:      ReportingConfig{Interval: 20 * time.Millisecond},
+			Abort:          AbortConfig{MaxErrorRate: 0.5},
+		},
+		Scenario: func(context.Context) (int, error) { return 500, errors.New("boom") },
+	}
+
+	start := time.Now()
+	_, err := RunContext(context.Background(), test)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, ErrAborted) {
+		t.Fatalf("expected ErrAborted, got %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("expected early abort, ran for %v", elapsed)
+	}
+}
+
+func TestValidateConfigRejectsOutOfRangePercentile(t *testing.T) {
+	for _, p := range []float64{0, 100, -1, 100.1} {
+		cfg := Config{
+			Phases:      []Phase{{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1}},
+			Percentiles: []float64{p},
+		}
+		if err := ValidateConfig(cfg); !errors.Is(err, errInvalidPercentile) {
+			t.Fatalf("percentile %v: expected errInvalidPercentile, got %v", p, err)
+		}
+	}
+}
+
+func TestRunContextReportsExtraPercentiles(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases:         []Phase{{Type: PhaseTypeConstant, Duration: 60 * time.Millisecond, ArrivalRate: 200}},
+			MaxConcurrency: 50,
+			Percentiles:    []float64{99.9},
+		},
+		Scenario: func(context.Context) (int, error) { return 200, nil },
+	}
+	result, err := RunContext(context.Background(), test)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if _, ok := result.ExtraPercentiles["p99.9"]; !ok {
+		t.Fatalf("expected p99.9 in ExtraPercentiles, got %v", result.ExtraPercentiles)
+	}
+}
+
 func TestRunReturnsErrorWhenNoPhases(t *testing.T) {
 	test := Test{
 		Scenario: func(context.Context) (int, error) { return 0, nil },

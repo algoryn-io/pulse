@@ -80,14 +80,15 @@ type jsonSnapshot struct {
 }
 
 type jsonResult struct {
-	SchemaVersion int              `json:"schema_version"`
-	Summary       jsonSummary      `json:"summary"`
-	Latency       jsonLatency      `json:"latency"`
-	StatusCodes   map[string]int64 `json:"status_codes"`
-	Errors        map[string]int64 `json:"errors"`
-	Thresholds    []jsonThreshold  `json:"thresholds"`
-	Snapshots     []jsonSnapshot   `json:"snapshots"`
-	Passed        bool             `json:"passed"`
+	SchemaVersion    int                `json:"schema_version"`
+	Summary          jsonSummary        `json:"summary"`
+	Latency          jsonLatency        `json:"latency"`
+	StatusCodes      map[string]int64   `json:"status_codes"`
+	Errors           map[string]int64   `json:"errors"`
+	ExtraPercentiles map[string]float64 `json:"extra_percentiles,omitempty"`
+	Thresholds       []jsonThreshold    `json:"thresholds"`
+	Snapshots        []jsonSnapshot     `json:"snapshots"`
+	Passed           bool               `json:"passed"`
 }
 
 func main() {
@@ -253,7 +254,12 @@ func run(args []string, stdout io.Writer) error {
 		result, runErr = execute(executeArgs)
 	}
 	progress.stop()
-	showResults := runErr == nil || isThresholdEvaluationFailureOnly(runErr)
+	// Show the (partial) result for a clean run, a threshold-only failure, or an
+	// early abort — all of which produced a meaningful result worth reporting.
+	showResults := runErr == nil || isThresholdEvaluationFailureOnly(runErr) || errors.Is(runErr, pulse.ErrAborted)
+	if errors.Is(runErr, pulse.ErrAborted) {
+		fmt.Fprintln(os.Stderr, "Run aborted early: a configured abort threshold was breached.")
+	}
 
 	if options.outFile != "" {
 		if err := writeFileAtomic(options.outFile, func(w io.Writer) error {
@@ -596,6 +602,17 @@ func writeText(w io.Writer, result pulse.Result, quiet bool) {
 	fmt.Fprintf(w, "P99 latency: %v\n", result.Latency.P99)
 	fmt.Fprintf(w, "Max latency: %v\n", result.Latency.Max)
 
+	if len(result.ExtraPercentiles) > 0 {
+		labels := make([]string, 0, len(result.ExtraPercentiles))
+		for label := range result.ExtraPercentiles {
+			labels = append(labels, label)
+		}
+		sort.Strings(labels)
+		for _, label := range labels {
+			fmt.Fprintf(w, "%s latency: %v\n", label, result.ExtraPercentiles[label])
+		}
+	}
+
 	if len(result.StatusCounts) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Status codes:")
@@ -700,11 +717,12 @@ func toJSONResult(result pulse.Result, passed bool) jsonResult {
 			P99MS:  durationToMilliseconds(result.Latency.P99),
 			MaxMS:  durationToMilliseconds(result.Latency.Max),
 		},
-		StatusCodes: toJSONCountMap(result.StatusCounts),
-		Errors:      cloneStringCountMap(result.ErrorCounts),
-		Thresholds:  toJSONThresholds(result.ThresholdOutcomes),
-		Snapshots:   toJSONSnapshots(result.Snapshots),
-		Passed:      passed,
+		StatusCodes:      toJSONCountMap(result.StatusCounts),
+		Errors:           cloneStringCountMap(result.ErrorCounts),
+		ExtraPercentiles: toJSONPercentiles(result.ExtraPercentiles),
+		Thresholds:       toJSONThresholds(result.ThresholdOutcomes),
+		Snapshots:        toJSONSnapshots(result.Snapshots),
+		Passed:           passed,
 	}
 }
 
@@ -772,6 +790,17 @@ func cloneStringCountMap(counts map[string]int64) map[string]int64 {
 	out := make(map[string]int64, len(counts))
 	for key, count := range counts {
 		out[key] = count
+	}
+	return out
+}
+
+func toJSONPercentiles(percentiles map[string]time.Duration) map[string]float64 {
+	if len(percentiles) == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(percentiles))
+	for label, d := range percentiles {
+		out[label+"_ms"] = durationToMilliseconds(d)
 	}
 	return out
 }

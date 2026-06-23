@@ -171,6 +171,75 @@ func TestLoadMapsThresholds(t *testing.T) {
 	}
 }
 
+func TestLoadMapsAbort(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	content := "" +
+		"phases:\n" +
+		"  - type: constant\n" +
+		"    duration: 3s\n" +
+		"    arrivalRate: 5\n" +
+		"target:\n" +
+		"  method: GET\n" +
+		"  url: https://httpbin.org/get\n" +
+		"reporting:\n" +
+		"  interval: 1s\n" +
+		"abort:\n" +
+		"  maxErrorRate: 0.25\n" +
+		"  maxP99: 750ms\n" +
+		"  minRequests: 100\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	test, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if test.Config.Abort.MaxErrorRate != 0.25 {
+		t.Errorf("abort MaxErrorRate = %v, want 0.25", test.Config.Abort.MaxErrorRate)
+	}
+	if test.Config.Abort.MaxP99 != 750*time.Millisecond {
+		t.Errorf("abort MaxP99 = %v, want 750ms", test.Config.Abort.MaxP99)
+	}
+	if test.Config.Abort.MinRequests != 100 {
+		t.Errorf("abort MinRequests = %v, want 100", test.Config.Abort.MinRequests)
+	}
+}
+
+func TestLoadMapsPercentiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	content := "" +
+		"phases:\n" +
+		"  - type: constant\n" +
+		"    duration: 3s\n" +
+		"    arrivalRate: 5\n" +
+		"target:\n" +
+		"  method: GET\n" +
+		"  url: https://httpbin.org/get\n" +
+		"percentiles: [99.9, 99.99]\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	test, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := []float64{99.9, 99.99}
+	if len(test.Config.Percentiles) != len(want) {
+		t.Fatalf("percentiles = %v, want %v", test.Config.Percentiles, want)
+	}
+	for i := range want {
+		if test.Config.Percentiles[i] != want[i] {
+			t.Errorf("percentiles[%d] = %v, want %v", i, test.Config.Percentiles[i], want[i])
+		}
+	}
+}
+
 func TestLoadBuildsGETScenario(t *testing.T) {
 	previousNewHTTPClient := newHTTPClient
 	client := &stubHTTPClient{}

@@ -252,3 +252,45 @@ func TestAggregatorCloseIsIdempotent(t *testing.T) {
 	a.Close()
 	a.Close()
 }
+
+func TestAggregatorExtraPercentiles(t *testing.T) {
+	a := NewAggregatorWithPercentiles([]float64{99.9, 150 /* out of range, ignored */})
+	for i := 0; i < 1000; i++ {
+		a.Record(time.Duration(i)*time.Millisecond, 200, nil)
+	}
+	r := a.Result(time.Second)
+
+	if r.ExtraPercentiles == nil {
+		t.Fatal("expected ExtraPercentiles to be populated")
+	}
+	if _, ok := r.ExtraPercentiles["p99.9"]; !ok {
+		t.Fatalf("expected p99.9 key, got %v", r.ExtraPercentiles)
+	}
+	if _, ok := r.ExtraPercentiles["p150"]; ok {
+		t.Fatal("out-of-range percentile should be ignored")
+	}
+	// p99.9 should be >= p99 and within [min,max].
+	if r.ExtraPercentiles["p99.9"] < r.Latency.P99 {
+		t.Errorf("p99.9 (%v) should be >= p99 (%v)", r.ExtraPercentiles["p99.9"], r.Latency.P99)
+	}
+	if r.ExtraPercentiles["p99.9"] > r.Latency.Max {
+		t.Errorf("p99.9 (%v) should be <= max (%v)", r.ExtraPercentiles["p99.9"], r.Latency.Max)
+	}
+}
+
+func TestAggregatorNoExtraPercentilesByDefault(t *testing.T) {
+	a := NewAggregator()
+	a.Record(time.Millisecond, 200, nil)
+	if r := a.Result(time.Second); r.ExtraPercentiles != nil {
+		t.Fatalf("expected nil ExtraPercentiles, got %v", r.ExtraPercentiles)
+	}
+}
+
+func TestPercentileLabel(t *testing.T) {
+	cases := map[float64]string{99: "p99", 99.9: "p99.9", 99.99: "p99.99", 50: "p50"}
+	for p, want := range cases {
+		if got := PercentileLabel(p); got != want {
+			t.Errorf("PercentileLabel(%v) = %q, want %q", p, got, want)
+		}
+	}
+}

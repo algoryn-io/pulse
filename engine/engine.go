@@ -32,6 +32,8 @@ type Engine struct {
 	reportInterval time.Duration
 	onLiveSnapshot func(metrics.Snapshot)
 	adaptive       AdaptiveConfig
+	abort          AbortConfig
+	percentiles    []float64
 }
 
 // Options contains execution settings for Engine.
@@ -47,6 +49,12 @@ type Options struct {
 	// Adaptive, when non-zero, enables real-time RPS auto-tuning for
 	// PhaseTypeConstant phases. Requires ReportInterval > 0.
 	Adaptive AdaptiveConfig
+	// Abort, when non-zero, stops the run early (Run returns ErrAborted) when a
+	// reporting interval breaches a configured limit. Requires ReportInterval > 0.
+	Abort AbortConfig
+	// Percentiles lists additional latency percentiles (values in (0,100), e.g.
+	// 99.9) to compute for the final result, reported in Result.ExtraPercentiles.
+	Percentiles []float64
 }
 
 // New creates an engine for the given execution inputs.
@@ -79,14 +87,24 @@ func NewWithOptions(phases []scheduler.Phase, scenario func(context.Context) (in
 		reportInterval: options.ReportInterval,
 		onLiveSnapshot: options.OnLiveSnapshot,
 		adaptive:       options.Adaptive,
+		abort:          options.Abort,
+		percentiles:    options.Percentiles,
 	}
 }
 
 // Run executes each phase in sequence through the scheduler.
 // Scenario errors are recorded in metrics and do not stop the run.
-// A non-nil error indicates scheduler failure or context cancellation.
+// A non-nil error indicates scheduler failure, context cancellation, or an
+// early abort triggered by Options.Abort (ErrAborted).
 func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
-	aggregator := metrics.NewAggregator()
+	// runCtx lets the abort checker cancel the whole run (scheduler + in-flight
+	// scenarios) from the interval goroutine. Cancelling it on return also stops
+	// any straggler work.
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	var aborted atomic.Bool
+
+	aggregator := metrics.NewAggregatorWithPercentiles(e.percentiles)
 	defer aggregator.Close()
 	startedAt := time.Now()
 	snapshots := newSnapshotCollector(startedAt, e.reportInterval)
@@ -143,9 +161,9 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 	var adaptiveCtrl atomic.Pointer[adaptiveController]
 
 	// Start a background goroutine that ticks at reportInterval to emit live
-	// snapshots and feed the adaptive controller.
-	if e.reportInterval > 0 && (e.onLiveSnapshot != nil || !e.adaptive.IsZero()) {
-		liveCtx, liveCancel := context.WithCancel(ctx)
+	// snapshots, feed the adaptive controller, and evaluate abort thresholds.
+	if e.reportInterval > 0 && (e.onLiveSnapshot != nil || !e.adaptive.IsZero() || !e.abort.IsZero()) {
+		liveCtx, liveCancel := context.WithCancel(runCtx)
 		var liveWG sync.WaitGroup
 		liveWG.Add(1)
 		// Cancel and JOIN the live goroutine before the deferred
@@ -174,6 +192,11 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 						if ctrl := adaptiveCtrl.Load(); ctrl != nil {
 							ctrl.onSnapshot(snap)
 						}
+						if !e.abort.IsZero() && e.abort.breached(snap) {
+							aborted.Store(true)
+							runCancel() // stop scheduler and in-flight scenarios
+							return
+						}
 					}
 				}
 			}
@@ -187,9 +210,15 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 			adaptiveCtrl.Store(ctrl)
 			p.RateFunc = ctrl.rate
 		}
-		if err := scheduler.Run(ctx, p, wrappedScenario); err != nil {
+		if err := scheduler.Run(runCtx, p, wrappedScenario); err != nil {
 			adaptiveCtrl.Store(nil)
 			wg.Wait()
+			// An abort cancels runCtx, surfacing as context.Canceled from the
+			// scheduler; report it as ErrAborted so callers can distinguish a
+			// threshold-driven stop from an external cancellation.
+			if aborted.Load() {
+				err = ErrAborted
+			}
 			return withLoadStats(aggregator.Result(time.Since(startedAt)), snapshots, &scheduled, &started, &dropped, &maxActive), err
 		}
 	}
