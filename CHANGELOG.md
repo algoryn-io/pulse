@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 ---
 ## [Unreleased]
 
+### Security
+
+- **Distributed worker authentication** — workers now support a shared bearer token. Set `PULSE_WORKER_TOKEN` on both the worker (`pulse worker`) and the coordinator process; the worker requires `Authorization: Bearer <token>` on `/ping` and `/run` (constant-time comparison) and rejects mismatches with `401`. When the variable is unset the worker still accepts unauthenticated requests (backward compatible) but prints a prominent warning. Library API: `worker.NewWithOptions(scenario, worker.Options{AuthToken, DenyPrivate})` and `coordinator.NewWithOptions(workers, coordinator.Options{AuthToken})`. This closes an unauthenticated remote SSRF / arbitrary-load primitive on exposed workers
+- **Worker SSRF policy (opt-in)** — set `PULSE_WORKER_DENY_PRIVATE=1` (or `worker.Options.DenyPrivate`) so worker-built HTTP scenarios dial through an SSRF-validating transport that rejects private, loopback, link-local, and cloud-metadata targets. Off by default because load-testing internal services is a legitimate use case
+- **Worker DoS hardening** — `/run` request bodies are now capped at 1 MiB via `http.MaxBytesReader`, and the worker HTTP server sets `ReadHeaderTimeout`, `ReadTimeout`, and `IdleTimeout` to resist slowloris-style attacks
+- **SSRF bypass fixes** (`internal/ssrf`) — the policy now blocks a request if **any** resolved address is private (previously only the first was checked, allowing multi-A and DNS-rebinding bypasses); IPv4-mapped IPv6 literals (e.g. `::ffff:169.254.169.254`) are normalized before matching; NAT64 prefixes (`64:ff9b::/96`, `64:ff9b:1::/48`) are blocked; new `ssrf.NewSafeTransport(policy, base)` validates the target **at dial time** and pins the validated IP, closing the DNS-rebinding TOCTOU window that `Check` alone cannot
+
 ### Added
 
 - **Correlations / value extraction** — `pulse.Extractor[T]` is a generic, thread-safe container for passing values extracted in one scenario step to subsequent steps (e.g. an auth token from a login response); `transport.ExtractHeader(resp, key)`, `transport.ExtractJSONString(resp, field)`, and `transport.ExtractRegexp(resp, pattern)` extract values from a `*transport.Response` for storing in an Extractor

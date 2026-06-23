@@ -104,10 +104,14 @@ pulse run path/to/config.yaml
 
 | Flag | Description |
 |------|-------------|
+| `--format text\|json` | Output format. `text` (default) is human-readable; `json` is for automation/CI. `--json` is a shorthand for `--format json`. |
+| `--quiet` | Print only the final summary (no progress). Cannot be combined with `--format json`. |
 | `--dry-run` | Validate config and print a phase summary without sending any traffic. Safe for pre-flight checks and PR pipelines. |
-| `--json` | Print results as **JSON** on stdout. |
-| `--out <file>` | Write the same JSON object to a file (can be combined with `--json`). |
+| `--seed <n>` | Seed all built-in randomness (jitter, error injection, etc.) for reproducible runs. |
+| `--out <file>` | Write the JSON result object to a file (atomic, symlink-safe; can be combined with `--json`). |
 | `--junit <file>` | Write a **JUnit XML** report for CI (thresholds become individual test cases). |
+| `--dashboard :port` | Start a live SSE metrics dashboard for the duration of the run (see [Live dashboard](#live-dashboard)). |
+| `--workers host:port,...` | Run distributed across the listed workers (see [Distributed mode](#distributed-mode)). |
 
 **Exit codes** — `0` success; `2` run finished but **thresholds failed**; `1` for usage, config, I/O, or other failures (including mixed error types).
 
@@ -158,6 +162,38 @@ The dashboard streams per-interval data via SSE and shows:
 - Current latency breakdown (min / P50 / P90 / P95 / P99 / max)
 
 The page reconnects automatically if the connection drops and shows a "Run complete" banner when the test finishes. The dashboard also works from the Go API via `Config.DashboardAddr` and `Config.OnSnapshot` (for custom per-interval callbacks).
+
+### Distributed mode
+
+For load beyond a single machine, run Pulse as a **coordinator + workers**. Each worker is a small HTTP server that executes a share of the arrival rate locally and returns full histogram buckets, so the coordinator can merge **accurate** percentiles (not an average of averages).
+
+Start one or more workers (each on its own host):
+
+```sh
+# On each worker host:
+export PULSE_WORKER_TOKEN=$(openssl rand -hex 32)   # shared secret (see Security)
+pulse worker --addr :9100
+```
+
+Then run the coordinator, pointing at the workers with `--workers`:
+
+```sh
+export PULSE_WORKER_TOKEN=...   # same token as the workers
+pulse run config.yaml --workers 10.0.0.1:9100,10.0.0.2:9100
+```
+
+The coordinator splits each phase's arrival rate and `maxConcurrency` evenly across workers (the first worker absorbs any integer remainder), pings all workers before starting, fans out the run, and merges the results. Thresholds and JSON/JUnit output behave exactly as in single-node mode. From the Go API, set `Config.Workers` (coordinator) and serve with `worker.NewWithOptions(...)`.
+
+#### Security
+
+Workers accept arbitrary target URLs in each run request, so an **exposed, unauthenticated worker is a remote SSRF / arbitrary-load primitive**. Protect them:
+
+| Variable | Where | Effect |
+|----------|-------|--------|
+| `PULSE_WORKER_TOKEN` | worker **and** coordinator | Shared bearer token. The worker requires `Authorization: Bearer <token>` on every request (constant-time compare) and returns `401` on mismatch. The coordinator sends it automatically. **Set this whenever a worker is reachable by anything other than localhost.** |
+| `PULSE_WORKER_DENY_PRIVATE` | worker | When truthy (`1`/`true`/`yes`/`on`), worker-built HTTP scenarios are rejected if they target private, loopback, link-local, or cloud-metadata addresses (validated at dial time). Leave unset when intentionally load-testing internal services. |
+
+The token is read from the environment (never from YAML or CLI flags) so it does not leak into version control or process listings. If `PULSE_WORKER_TOKEN` is unset the worker still runs but prints a warning — bind it to a private interface in that case.
 
 ### Adaptive load shaping
 

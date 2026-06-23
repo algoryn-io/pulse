@@ -131,9 +131,31 @@ func runWorker(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Security options come from the environment, never from CLI flags, so the
+	// shared secret does not leak into process listings or shell history.
+	opts := worker.Options{
+		AuthToken:   os.Getenv("PULSE_WORKER_TOKEN"),
+		DenyPrivate: isTruthy(os.Getenv("PULSE_WORKER_DENY_PRIVATE")),
+	}
+	if opts.AuthToken == "" {
+		fmt.Fprintln(os.Stderr, "WARNING: PULSE_WORKER_TOKEN is not set; this worker accepts UNAUTHENTICATED run requests. "+
+			"Set PULSE_WORKER_TOKEN (and bind to a private interface) before exposing it on a shared network.")
+	}
+
 	fmt.Fprintf(os.Stderr, "Pulse worker listening on %s\n", addr)
 	// CLI worker has no pre-registered scenario: it uses HTTPScenario from RunRequest.
-	return worker.New(nil).ListenAndServe(ctx, addr)
+	return worker.NewWithOptions(nil, opts).ListenAndServe(ctx, addr)
+}
+
+// isTruthy reports whether an environment-variable value should be treated as
+// enabled. Accepts "1", "true", "yes", "on" (case-insensitive).
+func isTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // exitCode maps run errors to process exit codes for CI/CD:
