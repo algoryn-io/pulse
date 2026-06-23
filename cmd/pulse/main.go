@@ -253,7 +253,12 @@ func run(args []string, stdout io.Writer) error {
 		result, runErr = execute(executeArgs)
 	}
 	progress.stop()
-	showResults := runErr == nil || isThresholdEvaluationFailureOnly(runErr)
+	// Show the (partial) result for a clean run, a threshold-only failure, or an
+	// early abort — all of which produced a meaningful result worth reporting.
+	showResults := runErr == nil || isThresholdEvaluationFailureOnly(runErr) || errors.Is(runErr, pulse.ErrAborted)
+	if errors.Is(runErr, pulse.ErrAborted) {
+		fmt.Fprintln(os.Stderr, "Run aborted early: a configured abort threshold was breached.")
+	}
 
 	if options.outFile != "" {
 		if err := writeFileAtomic(options.outFile, func(w io.Writer) error {

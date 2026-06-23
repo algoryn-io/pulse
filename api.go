@@ -47,6 +47,9 @@ var (
 	errAdaptiveRequiresInterval  = errors.New("pulse: Adaptive requires Reporting.Interval > 0")
 	errAdaptiveInvalidErrorRate  = errors.New("pulse: Adaptive.MaxErrorRate must be in [0,1]")
 	errAdaptiveInvalidP99        = errors.New("pulse: Adaptive.MaxP99 must not be negative")
+	errAbortRequiresInterval     = errors.New("pulse: Abort requires Reporting.Interval > 0")
+	errAbortInvalidErrorRate     = errors.New("pulse: Abort.MaxErrorRate must be in [0,1]")
+	errAbortInvalidP99           = errors.New("pulse: Abort.MaxP99 must not be negative")
 )
 
 const (
@@ -60,6 +63,16 @@ const (
 // based on observed error rate and P99 latency thresholds.
 // Requires Reporting.Interval > 0.
 type AdaptiveConfig = engine.AdaptiveConfig
+
+// AbortConfig stops a run early (fail-fast) when a reporting interval breaches a
+// configured error-rate or P99-latency limit. When triggered, RunContext
+// returns a result for the partial run wrapped with ErrAborted.
+// Requires Reporting.Interval > 0.
+type AbortConfig = engine.AbortConfig
+
+// ErrAborted is returned (joined into the run error) when an AbortConfig limit
+// is breached and the run is stopped early. Detect it with errors.Is.
+var ErrAborted = engine.ErrAborted
 
 // SaturationPolicy controls what happens when all execution slots are in use.
 type SaturationPolicy = engine.SaturationPolicy
@@ -185,6 +198,10 @@ type Config struct {
 	// PhaseTypeConstant phases based on observed error rate and P99 latency.
 	// Requires Reporting.Interval > 0.
 	Adaptive AdaptiveConfig
+	// Abort, when non-zero, stops the run early (fail-fast) when a reporting
+	// interval breaches a configured error-rate or P99-latency limit. The run
+	// error is wrapped with ErrAborted. Requires Reporting.Interval > 0.
+	Abort AbortConfig
 	// Reporters is an optional list of metric exporters called on each snapshot
 	// interval and once after the run completes. Requires Reporting.Interval > 0
 	// for OnSnapshot to fire; OnResult is always called.
@@ -368,6 +385,7 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 			ReportInterval: test.Config.Reporting.Interval,
 			OnLiveSnapshot: onLiveSnapshot,
 			Adaptive:       test.Config.Adaptive,
+			Abort:          test.Config.Abort,
 		},
 	)
 
@@ -507,6 +525,18 @@ func ValidateConfig(cfg Config) error {
 		}
 		if cfg.Adaptive.MaxP99 < 0 {
 			return errAdaptiveInvalidP99
+		}
+	}
+
+	if !cfg.Abort.IsZero() {
+		if cfg.Reporting.Interval == 0 {
+			return errAbortRequiresInterval
+		}
+		if cfg.Abort.MaxErrorRate < 0 || cfg.Abort.MaxErrorRate > 1 {
+			return errAbortInvalidErrorRate
+		}
+		if cfg.Abort.MaxP99 < 0 {
+			return errAbortInvalidP99
 		}
 	}
 
