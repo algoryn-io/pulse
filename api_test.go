@@ -9,6 +9,51 @@ import (
 	fabricv1 "algoryn.io/fabric/gen/go/fabric/v1"
 )
 
+func TestValidateConfigRejectsAbortWithoutInterval(t *testing.T) {
+	cfg := Config{
+		Phases: []Phase{{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1}},
+		Abort:  AbortConfig{MaxErrorRate: 0.5},
+		// Reporting.Interval intentionally left zero.
+	}
+	if err := ValidateConfig(cfg); !errors.Is(err, errAbortRequiresInterval) {
+		t.Fatalf("expected errAbortRequiresInterval, got %v", err)
+	}
+}
+
+func TestValidateConfigRejectsAbortInvalidErrorRate(t *testing.T) {
+	cfg := Config{
+		Phases:    []Phase{{Type: PhaseTypeConstant, Duration: time.Second, ArrivalRate: 1}},
+		Reporting: ReportingConfig{Interval: 100 * time.Millisecond},
+		Abort:     AbortConfig{MaxErrorRate: 1.5},
+	}
+	if err := ValidateConfig(cfg); !errors.Is(err, errAbortInvalidErrorRate) {
+		t.Fatalf("expected errAbortInvalidErrorRate, got %v", err)
+	}
+}
+
+func TestRunContextAbortsAndReturnsErrAborted(t *testing.T) {
+	test := Test{
+		Config: Config{
+			Phases:         []Phase{{Type: PhaseTypeConstant, Duration: 5 * time.Second, ArrivalRate: 200}},
+			MaxConcurrency: 100,
+			Reporting:      ReportingConfig{Interval: 20 * time.Millisecond},
+			Abort:          AbortConfig{MaxErrorRate: 0.5},
+		},
+		Scenario: func(context.Context) (int, error) { return 500, errors.New("boom") },
+	}
+
+	start := time.Now()
+	_, err := RunContext(context.Background(), test)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, ErrAborted) {
+		t.Fatalf("expected ErrAborted, got %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("expected early abort, ran for %v", elapsed)
+	}
+}
+
 func TestRunReturnsErrorWhenNoPhases(t *testing.T) {
 	test := Test{
 		Scenario: func(context.Context) (int, error) { return 0, nil },

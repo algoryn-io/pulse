@@ -1,0 +1,22 @@
+# Fail-fast: abort the run early when an interval breaches an SLO.
+# Point url at a degraded/erroring service; the run stops as soon as a
+# reporting window exceeds the limits instead of running the full duration.
+phases:
+  - type: constant
+    duration: 60s
+    arrivalRate: 50
+
+target:
+  method: GET
+  url: http://localhost:8080
+
+maxConcurrency: 50
+saturationPolicy: drop
+
+reporting:
+  interval: 1s
+
+abort:
+  maxErrorRate: 0.25     # abort if a 1s window exceeds 25% errors
+  maxP99: 750ms          # ...or if window P99 latency exceeds 750ms
+  minRequests: 20        # ignore windows with fewer than 20 completed requests

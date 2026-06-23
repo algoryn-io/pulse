@@ -44,6 +44,8 @@ Load-fidelity fields (`scheduled`, `started`, `dropped`, `dropped_rate`, `comple
 | **Output** | **Text** (human-readable) and **JSON** (automation, CI artifacts); optional interval snapshots expose transient behavior in JSON. Combine `--json` and `--out` to mirror JSON to a file. |
 | **Live dashboard** | Stream metrics to a browser via SSE with `--dashboard :9090`. Displays live RPS, latency percentile charts, and error rate as the run progresses. Shuts down automatically when the run completes. |
 | **Adaptive load shaping** | Auto-tune RPS in real time based on observed error rate and P99 latency. Set `Config.Adaptive` to define thresholds; the engine steps the arrival rate down when limits are exceeded and recovers when conditions improve. Requires `Reporting.Interval > 0`. |
+| **Fail-fast / abort** | Stop a run early when a reporting interval breaches an error-rate or P99 limit. Set `Config.Abort` (or an `abort:` YAML section); `RunContext` returns the partial result wrapped with `pulse.ErrAborted`. Requires `Reporting.Interval > 0`. |
+| **Sessions / cookies** | `transport.HTTPClient.Session()` gives each virtual-user iteration an isolated cookie jar over a shared connection pool — login → cookie → authenticated requests work without leaking sessions between concurrent iterations. |
 | **Chaos injection** | Inject synthetic faults at the transport layer without touching scenario code. `transport.NewChaosRoundTripper` wraps any `http.RoundTripper` and applies configurable error injection (`ErrorRate`) and latency injection (`LatencyRate` + `Latency`) per request. |
 | **Correlations** | `pulse.Extractor[T]` passes values extracted in one step (e.g. auth token from login) to subsequent steps. `transport.ExtractHeader`, `ExtractJSONString`, and `ExtractRegexp` pull values from a `*Response`. |
 | **HAR import** | `har.LoadFile(path, cfg)` converts an HTTP Archive file into a `pulse.Scenario` that replays all recorded requests in sequence. Filter entries, supply a custom client, and use recorded Auth headers as-is. |
@@ -218,6 +220,46 @@ pulse.Run(pulse.Test{
 ```
 
 `Adaptive` requires `Reporting.Interval > 0`. It only applies to `PhaseTypeConstant` phases; ramp, step, and spike phases run at their scheduled rates.
+
+### Fail-fast / abort
+
+Stop a run early when live metrics breach a limit — useful in CI to fail quickly instead of running a doomed test to completion. Set `Config.Abort` (Go) or an `abort:` section (YAML); the run is cancelled and the error is wrapped with `pulse.ErrAborted`.
+
+```yaml
+reporting:
+  interval: 500ms
+abort:
+  maxErrorRate: 0.25     # abort if a window exceeds 25 % errors
+  maxP99: 750ms          # ...or if window P99 exceeds 750ms
+  minRequests: 50        # only evaluate windows with >= 50 completed requests
+```
+
+```go
+_, err := pulse.RunContext(ctx, test)
+if errors.Is(err, pulse.ErrAborted) {
+    // the SLO was breached mid-run; the returned Result holds partial metrics
+}
+```
+
+`Abort` requires `Reporting.Interval > 0`. `MinRequests` guards against aborting on a tiny, noisy first window. On the CLI, an aborted run prints its partial summary plus a notice and exits non-zero.
+
+### Sessions / cookies
+
+By default an `HTTPClient` has no cookie jar, so requests are stateless. For session-based flows (login → cookie → authenticated requests), call `Session()` at the start of a scenario: it reuses the base client's connection pool but gets a **fresh** cookie jar, keeping each virtual user's session isolated from other concurrent iterations.
+
+```go
+base := transport.NewHTTPClientWith(transport.HTTPClientConfig{})
+
+scenario := func(ctx context.Context) (int, error) {
+    s := base.Session() // shared transport, private cookie jar
+    if _, err := s.Do(ctx, http.MethodPost, loginURL, creds); err != nil {
+        return 0, err
+    }
+    return s.Do(ctx, http.MethodGet, profileURL, nil) // sends the login cookie
+}
+```
+
+Pass a custom jar to the base client with `HTTPClientConfig.Jar` when you want a single shared session instead.
 
 ### Chaos / fault injection
 
