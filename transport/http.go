@@ -156,11 +156,11 @@ func (c *HTTPClient) do(ctx context.Context, method, url string, body io.Reader)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	maxResponseBytes := c.maxResponseBytes
 	if maxResponseBytes <= 0 {

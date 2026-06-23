@@ -18,15 +18,16 @@ import (
 	pulse "algoryn.io/pulse"
 	"algoryn.io/pulse/config"
 	"algoryn.io/pulse/distributed/worker"
+	"algoryn.io/pulse/reporter"
 )
 
-const usageMessage = "usage: pulse run <config.yaml> [--format text|json] [--quiet] [--dry-run] [--seed <n>] [--out <file>] [--junit <file>] [--workers host:port,...] [--dashboard :port]\n\nRuns the load test defined in <config.yaml>\n\nDistributed mode: pulse worker --addr <host:port>"
+const usageMessage = "usage: pulse run <config.yaml> [--format text|json] [--quiet] [--dry-run] [--seed <n>] [--out <file>] [--junit <file>] [--csv <file>] [--workers host:port,...] [--dashboard :port]\n\nRuns the load test defined in <config.yaml>\n\nDistributed mode: pulse worker --addr <host:port>"
 const textBanner = "Pulse"
 const textBannerSubtitle = "Programmable load testing"
 const textStatusPassed = "✔ Test passed"
 const textStatusThresholdFailed = "❌ Thresholds failed"
 
-var errUsage = fmt.Errorf(usageMessage)
+var errUsage = errors.New(usageMessage)
 var execute = runTest
 
 type runOptions struct {
@@ -37,6 +38,7 @@ type runOptions struct {
 	seed          *int64
 	outFile       string
 	junitFile     string
+	csvFile       string
 	workers       []string // distributed worker addresses
 	dashboardAddr string   // live dashboard address (e.g. ":9090")
 }
@@ -269,6 +271,21 @@ func run(args []string, stdout io.Writer) error {
 		}
 	}
 
+	if options.csvFile != "" {
+		if err := writeFileAtomic(options.csvFile, func(w io.Writer) error {
+			// Replay the run's snapshots and final result through the CSV
+			// reporter so the file matches the streaming format exactly.
+			rep := reporter.NewCSVReporter(w, reporter.CSVConfig{Snapshots: true})
+			for _, s := range result.Snapshots {
+				rep.OnSnapshot(s)
+			}
+			rep.OnResult(result, runErr == nil)
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+
 	if showResults {
 		if options.format == "json" {
 			if err := writeJSON(stdout, result, runErr == nil); err != nil {
@@ -404,6 +421,12 @@ func parseRunArgs(args []string) (runOptions, error) {
 				return runOptions{}, errUsage
 			}
 			options.junitFile = args[i+1]
+			i++
+		case "--csv":
+			if i+1 >= len(args) {
+				return runOptions{}, errUsage
+			}
+			options.csvFile = args[i+1]
 			i++
 		case "--workers":
 			if i+1 >= len(args) {
@@ -783,8 +806,8 @@ func writeFileAtomic(path string, write func(io.Writer) error) (retErr error) {
 	// Always clean up the temp file on failure.
 	defer func() {
 		if retErr != nil {
-			tmp.Close()
-			os.Remove(tmpName)
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
 		}
 	}()
 

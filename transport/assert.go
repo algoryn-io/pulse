@@ -33,11 +33,11 @@ func (c *HTTPClient) DoWithResponse(ctx context.Context, method, url string, bod
 	resp, err := c.client.Do(req)
 	if err != nil {
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	maxBytes := c.maxResponseBytes
 	if maxBytes <= 0 {

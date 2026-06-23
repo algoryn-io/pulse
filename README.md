@@ -51,7 +51,7 @@ Load-fidelity fields (`scheduled`, `started`, `dropped`, `dropped_rate`, `comple
 | **Scenario chaining** | `pulse.Sequence(steps...)` and `pulse.Flow(steps...)` compose multiple scenario functions into a single user journey. `Flow` wraps errors with the step name for easy identification. |
 | **Data injection** | `pulse.NewFeeder[T](items)` supplies parameterized values (user IDs, payloads, tokens) to concurrent scenario invocations round-robin. `pulse.NewFeederFunc[T](fn)` supports generated or random data. Both are generic and allocation-free in the hot path. |
 | **Response assertions** | `transport.HTTPClient.DoWithResponse` returns a `*transport.Response` (status, headers, pre-read body). Use `AssertStatus`, `AssertBodyContains`, `AssertBodyJSON`, and `AssertHeader` to validate responses inside scenarios. |
-| **Plugin reporters** | Export metrics to external systems by implementing `pulse.Reporter` (`OnSnapshot` + `OnResult`). Built-in reporters: `reporter.NewPrometheusReporter` (Prometheus `/metrics`), `reporter.NewInfluxDBReporter` (InfluxDB v2 line protocol), `reporter.NewDatadogReporter` (DogStatsD UDP), `reporter.NewOTelReporter` (OpenTelemetry via any `metric.MeterProvider`). Wire them via `Config.Reporters`. |
+| **Plugin reporters** | Export metrics to external systems by implementing `pulse.Reporter` (`OnSnapshot` + `OnResult`). Built-in reporters: `reporter.NewPrometheusReporter` (Prometheus `/metrics`), `reporter.NewInfluxDBReporter` (InfluxDB v2 line protocol), `reporter.NewDatadogReporter` (DogStatsD UDP), `reporter.NewOTelReporter` (OpenTelemetry via any `metric.MeterProvider`), `reporter.NewCSVReporter` (CSV, also exposed as `--csv`). Wire them via `Config.Reporters`. |
 | **API** | Use **`pulse.Run`** or cancelable **`pulse.RunContext`**, `OnResult` hooks, `OnSnapshot` for per-interval callbacks, optional **`OnFabricEmit`** for **Fabric protobuf** (`RunEvent` + `RunCompleted` event), and **middleware** for chaos-style scenarios; **`RunT`** for `go test` integration. |
 | **Tooling** | Optional **`mockserver`** for local demos; see [`examples/`](examples/). |
 
@@ -110,6 +110,7 @@ pulse run path/to/config.yaml
 | `--seed <n>` | Seed all built-in randomness (jitter, error injection, etc.) for reproducible runs. |
 | `--out <file>` | Write the JSON result object to a file (atomic, symlink-safe; can be combined with `--json`). |
 | `--junit <file>` | Write a **JUnit XML** report for CI (thresholds become individual test cases). |
+| `--csv <file>` | Write a **CSV** report (header + one row per snapshot + a final summary row) for spreadsheets/CI artifacts. |
 | `--dashboard :port` | Start a live SSE metrics dashboard for the duration of the run (see [Live dashboard](#live-dashboard)). |
 | `--workers host:port,...` | Run distributed across the listed workers (see [Distributed mode](#distributed-mode)). |
 
@@ -276,6 +277,7 @@ pulse.Run(pulse.Test{
 | `NewInfluxDBReporter` | HTTP — InfluxDB v2 line protocol (`/api/v2/write`) | `algoryn.io/pulse/reporter` |
 | `NewDatadogReporter` | UDP — DogStatsD datagrams | `algoryn.io/pulse/reporter` |
 | `NewOTelReporter` | OpenTelemetry gauges via any `metric.MeterProvider` | `algoryn.io/pulse/reporter` |
+| `NewCSVReporter` | CSV rows to any `io.Writer` (also `--csv <file>`) | `algoryn.io/pulse/reporter` |
 
 ### Correlations
 
@@ -483,6 +485,8 @@ go run ./cmd/mockserver --mode flaky --flaky-rate 0.4
 Pulse’s JSON output is a **stable contract** for CI tooling. The top-level object includes `schema_version` (currently `1`), plus `summary` (totals, RPS, `duration_ms`, scheduled / started / dropped / completed requests, dropped rate, and maximum active requests), `latency` with **`min_ms`**, **`p50_ms`**, **`mean_ms`**, **`p90_ms`**, **`p95_ms`**, **`p99_ms`**, **`max_ms`**, `status_codes`, `errors`, per-threshold rows, optional interval `snapshots`, and `passed`.
 
 **Compatibility**: within `schema_version: 1`, changes are additive only. Breaking changes require a new schema version.
+
+The `errors` map groups failures by category: `http_status_error` (status ≥ 400), `deadline_exceeded` (context deadline), `context_canceled` (run cancelled), `timeout` (network I/O timeout), `transport` (connection refused, DNS failures, other `net.Error`s), and `unknown_error` (everything else). The set is **open-ended** — new categories may be added additively, so consumers should not assume a fixed list of keys.
 
 Set `reporting.interval` to enable temporal snapshots. Enabled intervals must be at least `10ms`, and a run may generate at most `10,000` snapshots. Windows are aligned to the run start. Scheduled arrivals, started requests, and dropped arrivals belong to the interval where they are handled. Completed requests, failures, status codes, errors, and latency belong to the interval where execution finishes. The text report remains a concise global summary; snapshots are emitted in JSON for automation and visualization.
 

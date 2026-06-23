@@ -14,6 +14,10 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **CSV exporter** — `reporter.NewCSVReporter(w io.Writer, cfg CSVConfig)` writes Pulse metrics as CSV with a stable column order (a header row, an optional row per snapshot when `CSVConfig.Snapshots` is true, and a final `kind=result` summary row). On the CLI, `--csv <file>` writes the run's snapshots and final result to a file (atomic, symlink-safe) for CI artifacts
+
+- **Extended error taxonomy** — `ErrorCounts` now distinguishes network failures that previously fell into `unknown_error`: `timeout` (I/O timeouts not driven by the context) and `transport` (connection refused, DNS failures, and other `net.Error`s). Existing categories (`context_canceled`, `deadline_exceeded`, `http_status_error`, `unknown_error`) are unchanged; the map remains open-ended, consistent with the additive JSON v1 contract
+
 - **Correlations / value extraction** — `pulse.Extractor[T]` is a generic, thread-safe container for passing values extracted in one scenario step to subsequent steps (e.g. an auth token from a login response); `transport.ExtractHeader(resp, key)`, `transport.ExtractJSONString(resp, field)`, and `transport.ExtractRegexp(resp, pattern)` extract values from a `*transport.Response` for storing in an Extractor
 
 - **HAR import** — `har.LoadFile(path, cfg)` and `har.Load(r, cfg)` parse HTTP Archive files and return a `pulse.Scenario` that replays all recorded requests in sequence via `pulse.Flow`; hop-by-hop headers are stripped automatically; `Config.Filter` skips entries (e.g. static assets); `Config.Client` accepts a custom `*http.Client`; errors include the step name (`"GET https://api/users: HTTP 404"`) for easy diagnosis
@@ -28,6 +32,10 @@ All notable changes to this project will be documented in this file.
 
 - **Data injection / Feeder** — `pulse.NewFeeder[T](items []T)` returns a generic, thread-safe feeder that supplies values to concurrent scenario invocations round-robin; `pulse.NewFeederFunc[T](fn func() T)` supports generated or random values; both expose a single `Next() T` method with no allocations in the hot path
 - **Response assertions** — `transport.Response` type returned by the new `HTTPClient.DoWithResponse(ctx, method, url, body)` method; unlike `Do`, status >= 400 does not produce an error, giving callers full control via assertion helpers: `AssertStatus(resp, expected)`, `AssertBodyContains(resp, substr)`, `AssertBodyJSON(resp, &v)`, `AssertHeader(resp, key, expected)`; the body is pre-read into memory (up to `MaxResponseBytes`) so helpers can inspect it without draining
+
+### Changed
+
+- **CI lint** — CI now runs `golangci-lint` (pinned `@v2.6.0`; config in `.golangci.yml` covering errcheck/govet/ineffassign/staticcheck/unused) and `go test -race`. Pre-existing lint findings were fixed, including a dead overflow guard in `metrics.nsToDuration` and a stale unused type in the dashboard server
 
 ---
 ## [v0.5.0] — 2026-06-20

@@ -166,15 +166,14 @@ func nsToDuration(v float64) time.Duration {
 	if v <= 0 {
 		return 0
 	}
-	// time.Duration is int64 nanoseconds.
-	r := int64(math.Round(v))
-	if r < 0 {
-		return 0
-	}
-	if r > math.MaxInt64 {
+	// time.Duration is int64 nanoseconds. Guard the overflow on the float64
+	// before the int64 cast — once cast, a too-large value would have already
+	// wrapped, so a post-cast comparison against math.MaxInt64 is dead.
+	v = math.Round(v)
+	if v >= math.MaxInt64 {
 		return time.Duration(math.MaxInt64)
 	}
-	return time.Duration(r)
+	return time.Duration(int64(v))
 }
 
 // clampDuration keeps a percentile within observed min–max. Logarithmic-bucket
