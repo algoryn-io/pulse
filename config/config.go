@@ -115,7 +115,7 @@ func Load(path string) (pulse.Test, error) {
 	if err != nil {
 		return pulse.Test{}, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	data, err := io.ReadAll(io.LimitReader(file, maxConfigBytes+1))
 	if err != nil {

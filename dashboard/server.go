@@ -90,10 +90,6 @@ func (s *Server) Push(snap any) {
 
 // Complete sends the final result to all SSE clients and closes the stream.
 func (s *Server) Complete(result any, passed bool) {
-	type donePayload struct {
-		Passed bool `json:"passed"`
-		// Embed the result fields by marshalling result separately and merging.
-	}
 	// Merge result + passed into a single JSON object.
 	resultBytes, err := json.Marshal(result)
 	if err != nil {

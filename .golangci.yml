@@ -1,0 +1,25 @@
+# golangci-lint configuration (v2 schema).
+# Runs the standard linter set: errcheck, govet, ineffassign, staticcheck, unused.
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      # Writes to stdout/stderr and HTTP response writers are best-effort; a
+      # failed console/network write is not actionable in this tool.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+  exclusions:
+    rules:
+      # Tests routinely ignore errors on fixtures (Close, Write to recorders).
+      - path: _test\.go
+        linters:
+          - errcheck

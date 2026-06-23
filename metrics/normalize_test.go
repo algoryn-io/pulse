@@ -4,10 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"testing"
 
 	"algoryn.io/pulse/transport"
 )
+
+// fakeNetError implements net.Error with a configurable Timeout result.
+type fakeNetError struct {
+	msg     string
+	timeout bool
+}
+
+func (e *fakeNetError) Error() string   { return e.msg }
+func (e *fakeNetError) Timeout() bool   { return e.timeout }
+func (e *fakeNetError) Temporary() bool { return false }
 
 func TestNormalizeError(t *testing.T) {
 	tests := []struct {
@@ -22,6 +34,10 @@ func TestNormalizeError(t *testing.T) {
 		{name: "wrapped deadline", err: fmt.Errorf("wrap: %w", context.DeadlineExceeded), want: "deadline_exceeded"},
 		{name: "http status error", err: &transport.HTTPStatusError{StatusCode: 503}, want: "http_status_error"},
 		{name: "wrapped http status error", err: fmt.Errorf("client: %w", &transport.HTTPStatusError{StatusCode: 404}), want: "http_status_error"},
+		{name: "net timeout", err: &fakeNetError{msg: "i/o timeout", timeout: true}, want: "timeout"},
+		{name: "net timeout wrapped in url.Error", err: &url.Error{Op: "Get", URL: "http://x", Err: &fakeNetError{msg: "i/o timeout", timeout: true}}, want: "timeout"},
+		{name: "net non-timeout (transport)", err: &fakeNetError{msg: "connection refused", timeout: false}, want: "transport"},
+		{name: "real DNS error", err: &net.OpError{Op: "dial", Err: &net.DNSError{Err: "no such host"}}, want: "transport"},
 		{name: "arbitrary", err: errors.New("boom"), want: "unknown_error"},
 	}
 	for _, tt := range tests {

@@ -93,7 +93,7 @@ func (c *Coordinator) ping(ctx context.Context, addr string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
@@ -154,7 +154,7 @@ func (c *Coordinator) runWorker(ctx context.Context, addr string, req distribute
 	if err != nil {
 		return distributed.WorkerResult{}, fmt.Errorf("pulse coordinator: POST /run to %s: %w", addr, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return distributed.WorkerResult{}, fmt.Errorf("pulse coordinator: worker %s returned HTTP %d", addr, resp.StatusCode)

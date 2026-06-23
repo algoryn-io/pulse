@@ -123,7 +123,7 @@ func (r *DatadogReporter) send(datagrams ...string) {
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	for _, dg := range datagrams {
 		conn.Write([]byte(dg)) //nolint:errcheck
 	}

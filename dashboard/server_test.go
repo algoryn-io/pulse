@@ -54,26 +54,6 @@ func TestHandleIndex_NotFound(t *testing.T) {
 
 // ── SSE broadcast ────────────────────────────────────────────────────────────
 
-// fakeResponseWriter is an httptest.ResponseRecorder with Flusher support.
-type fakeResponseWriter struct {
-	*httptest.ResponseRecorder
-	flushed chan struct{}
-}
-
-func newFakeRW() *fakeResponseWriter {
-	return &fakeResponseWriter{
-		ResponseRecorder: httptest.NewRecorder(),
-		flushed:          make(chan struct{}, 100),
-	}
-}
-
-func (f *fakeResponseWriter) Flush() {
-	select {
-	case f.flushed <- struct{}{}:
-	default:
-	}
-}
-
 func TestPush_BroadcastsToConnectedClients(t *testing.T) {
 	srv := New()
 

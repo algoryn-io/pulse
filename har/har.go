@@ -86,7 +86,7 @@ func LoadFile(path string, cfg Config) (pulse.Scenario, error) {
 	if err != nil {
 		return nil, fmt.Errorf("har: open %q: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return Load(f, cfg)
 }
 
@@ -152,8 +152,8 @@ func buildStep(client *http.Client, req Request) pulse.Scenario {
 		if err != nil {
 			return 0, err
 		}
-		defer resp.Body.Close()
-		io.Copy(io.Discard, resp.Body) //nolint:errcheck
+		defer func() { _ = resp.Body.Close() }()
+		_, _ = io.Copy(io.Discard, resp.Body)
 
 		if resp.StatusCode >= http.StatusBadRequest {
 			return resp.StatusCode, fmt.Errorf("har: HTTP %d", resp.StatusCode)
