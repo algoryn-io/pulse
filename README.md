@@ -39,7 +39,7 @@ Load-fidelity fields (`scheduled`, `started`, `dropped`, `dropped_rate`, `comple
 | Area | What you get |
 |------|----------------|
 | **Load model** | **Multi-phase** tests: **Constant**, **Ramp**, **Step**, and **Spike** — arrival-rate (RPS) driven, with explicit `drop` or `block` saturation behavior. |
-| **Latency** | **P50, P90, P95, P99** (plus min, mean, max) from the **C++ histogram**; stable under load, bounded memory. |
+| **Latency** | **P50, P90, P95, P99** (plus min, mean, max) from the **C++ histogram**; stable under load, bounded memory. Add custom percentiles (e.g. P99.9) via `Config.Percentiles` / `percentiles:` YAML. |
 | **Configuration** | Strict **YAML** test definitions with **env var interpolation** (`${VAR}` / `${VAR:-default}`). Supports target, phases, `maxConcurrency`, saturation policy, and optional **thresholds** (error rate, dropped-arrival rate, mean / P95 / P99 latency). |
 | **Output** | **Text** (human-readable) and **JSON** (automation, CI artifacts); optional interval snapshots expose transient behavior in JSON. Combine `--json` and `--out` to mirror JSON to a file. |
 | **Live dashboard** | Stream metrics to a browser via SSE with `--dashboard :9090`. Displays live RPS, latency percentile charts, and error rate as the run progresses. Shuts down automatically when the run completes. |
@@ -260,6 +260,24 @@ scenario := func(ctx context.Context) (int, error) {
 ```
 
 Pass a custom jar to the base client with `HTTPClientConfig.Jar` when you want a single shared session instead.
+
+### Custom percentiles
+
+Beyond the always-reported P50/P90/P95/P99, request extra percentiles for the final result. The C++ histogram computes them directly — no extra per-sample storage.
+
+```yaml
+percentiles: [99.9, 99.99]
+```
+
+```go
+result, _ := pulse.RunContext(ctx, pulse.Test{
+    Config: pulse.Config{Percentiles: []float64{99.9}, /* ... */},
+    Scenario: scenario,
+})
+fmt.Println(result.ExtraPercentiles["p99.9"])
+```
+
+Values must be in `(0,100)`. They appear in `Result.ExtraPercentiles` (keyed `"p99.9"`), in CLI text output, and in JSON under `extra_percentiles` (e.g. `"p99.9_ms"`).
 
 ### Chaos / fault injection
 
@@ -526,7 +544,7 @@ go run ./cmd/mockserver --mode flaky --flaky-rate 0.4
 
 Pulse’s JSON output is a **stable contract** for CI tooling. The top-level object includes `schema_version` (currently `1`), plus `summary` (totals, RPS, `duration_ms`, scheduled / started / dropped / completed requests, dropped rate, and maximum active requests), `latency` with **`min_ms`**, **`p50_ms`**, **`mean_ms`**, **`p90_ms`**, **`p95_ms`**, **`p99_ms`**, **`max_ms`**, `status_codes`, `errors`, per-threshold rows, optional interval `snapshots`, and `passed`.
 
-**Compatibility**: within `schema_version: 1`, changes are additive only. Breaking changes require a new schema version.
+**Compatibility**: within `schema_version: 1`, changes are additive only. Breaking changes require a new schema version. When `percentiles` is configured, the result also includes an `extra_percentiles` object (e.g. `{"p99.9_ms": 142.3}`); it is omitted when empty.
 
 The `errors` map groups failures by category: `http_status_error` (status ≥ 400), `deadline_exceeded` (context deadline), `context_canceled` (run cancelled), `timeout` (network I/O timeout), `transport` (connection refused, DNS failures, other `net.Error`s), and `unknown_error` (everything else). The set is **open-ended** — new categories may be added additively, so consumers should not assume a fixed list of keys.
 

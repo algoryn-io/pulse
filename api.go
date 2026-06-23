@@ -50,6 +50,7 @@ var (
 	errAbortRequiresInterval     = errors.New("pulse: Abort requires Reporting.Interval > 0")
 	errAbortInvalidErrorRate     = errors.New("pulse: Abort.MaxErrorRate must be in [0,1]")
 	errAbortInvalidP99           = errors.New("pulse: Abort.MaxP99 must not be negative")
+	errInvalidPercentile         = errors.New("pulse: Percentiles values must be in (0,100)")
 )
 
 const (
@@ -202,6 +203,11 @@ type Config struct {
 	// interval breaches a configured error-rate or P99-latency limit. The run
 	// error is wrapped with ErrAborted. Requires Reporting.Interval > 0.
 	Abort AbortConfig
+	// Percentiles lists additional latency percentiles (values in (0,100), e.g.
+	// 99.9) to compute for the final result, in addition to the always-reported
+	// P50/P90/P95/P99. Reported in Result.ExtraPercentiles keyed by label
+	// ("p99.9"). Out-of-range values are rejected by validation.
+	Percentiles []float64
 	// Reporters is an optional list of metric exporters called on each snapshot
 	// interval and once after the run completes. Requires Reporting.Interval > 0
 	// for OnSnapshot to fire; OnResult is always called.
@@ -248,6 +254,10 @@ type Result struct {
 	ErrorCounts       map[string]int64
 	ThresholdOutcomes []ThresholdOutcome `json:"-"`
 	Snapshots         []Snapshot
+	// ExtraPercentiles holds additional latency percentiles requested via
+	// Config.Percentiles, keyed by label (e.g. "p99.9"). Nil when none were
+	// requested.
+	ExtraPercentiles map[string]time.Duration
 }
 
 // Snapshot contains metrics observed during one reporting interval.
@@ -386,6 +396,7 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 			OnLiveSnapshot: onLiveSnapshot,
 			Adaptive:       test.Config.Adaptive,
 			Abort:          test.Config.Abort,
+			Percentiles:    test.Config.Percentiles,
 		},
 	)
 
@@ -537,6 +548,12 @@ func ValidateConfig(cfg Config) error {
 		}
 		if cfg.Abort.MaxP99 < 0 {
 			return errAbortInvalidP99
+		}
+	}
+
+	for _, p := range cfg.Percentiles {
+		if p <= 0 || p >= 100 {
+			return errInvalidPercentile
 		}
 	}
 
@@ -780,9 +797,10 @@ func metricsResultToResult(m metrics.Result) Result {
 		DroppedRate:  m.DroppedRate,
 		Completed:    m.Completed,
 		MaxActive:    m.MaxActive,
-		StatusCounts: m.StatusCounts,
-		ErrorCounts:  m.ErrorCounts,
-		Snapshots:    toSnapshots(m.Snapshots),
+		StatusCounts:     m.StatusCounts,
+		ErrorCounts:      m.ErrorCounts,
+		Snapshots:        toSnapshots(m.Snapshots),
+		ExtraPercentiles: m.ExtraPercentiles,
 		Latency: LatencyStats{
 			Min:  m.Latency.Min,
 			Mean: m.Latency.Mean,
