@@ -8,6 +8,13 @@ import (
 	"algoryn.io/pulse/transport"
 )
 
+// ErrUser marks an error as originating from scenario/user code — a business-rule
+// violation, bad test data, client-side validation, or any failure that is the
+// test's responsibility rather than the target's. Wrap a scenario error with it
+// (most easily via pulse.UserError) so it is counted under the "user_error"
+// category instead of "unknown_error". Detect it with errors.Is.
+var ErrUser = errors.New("pulse: user error")
+
 // normalizeError maps an error to a stable category for ErrorCounts.
 // For err == nil it returns "" (caller must not count).
 //
@@ -31,6 +38,12 @@ func normalizeError(err error) string {
 	// error (http_status_error) and from transport failures.
 	if errors.Is(err, transport.ErrCheckFailed) {
 		return "check_failed"
+	}
+	// An explicit user/scenario error. Checked before the transport/status
+	// classifications so a deliberately marked error wins even when it wraps a
+	// network or status error.
+	if errors.Is(err, ErrUser) {
+		return "user_error"
 	}
 	var httpErr *transport.HTTPStatusError
 	if errors.As(err, &httpErr) {
