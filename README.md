@@ -536,6 +536,23 @@ ids := pulse.NewFeederFunc(func() int {
 })
 ```
 
+**Data-driven runs from YAML.** For the built-in HTTP scenario you can drive iterations from a CSV or JSONL file and substitute `{{variable}}` placeholders in the target URL and body:
+
+```yaml
+target:
+  method: GET
+  url: http://localhost:8080/users/{{id}}?name={{name}}
+  # method: POST
+  # body: '{"id":{{id}},"name":"{{name}}"}'
+feeder:
+  format: csv             # csv | jsonl
+  path: ./users.csv       # CSV: header row defines variable names
+  mode: round-robin       # round-robin (default, deterministic) | random
+  # seed: 42              # random mode: set for reproducible draws (falls back to config.seed)
+```
+
+The `{{...}}` delimiter is used because `${...}` is reserved for [environment-variable interpolation](#environment-variable-interpolation). The feeder `path` is resolved relative to the config file's directory. CSV rows are keyed by the header columns; JSONL treats each line as a flat JSON object (scalar values become strings). Every placeholder referenced in the URL or body must exist in **every** row — a missing variable is reported at load time, naming the variable and row. Placeholders in `headers` are rejected (headers are not templated). Iteration is **round-robin** (deterministic) by default or **random** (seeded for reproducibility). Feeders are local-only — not supported in distributed mode, since the data file lives on the coordinator. The data file is capped at 50 MiB.
+
 ### Response assertions
 
 Use `DoWithResponse` when you need to validate the response body or headers inside a scenario:

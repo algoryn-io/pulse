@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -46,6 +47,7 @@ type fileConfig struct {
 	Stress           stressConfig     `yaml:"stress"`
 	Percentiles      []float64        `yaml:"percentiles"`
 	Reporting        reportingConfig  `yaml:"reporting"`
+	Feeder           *feederConfig    `yaml:"feeder"`
 	Seed             *int64           `yaml:"seed"`
 	// Workers is an optional list of distributed worker addresses ("host:port").
 	// When set, `pulse run` fans out the load test to these workers instead of
@@ -253,8 +255,13 @@ func Load(path string) (pulse.Test, error) {
 		return pulse.Test{}, err
 	}
 
+	feeder, err := loadFeeder(cfg, filepath.Dir(path))
+	if err != nil {
+		return pulse.Test{}, err
+	}
+
 	client := newHTTPClient(cfg)
-	scenario := buildScenario(client, method, cfg.Target.URL, cfg.Target.Body, cfg.Target.Checks)
+	scenario := buildScenario(client, method, cfg.Target.URL, cfg.Target.Body, cfg.Target.Checks, feeder)
 	test := pulse.Test{
 		Config:   pulseCfg,
 		Scenario: scenario,
@@ -263,34 +270,90 @@ func Load(path string) (pulse.Test, error) {
 	return test, nil
 }
 
-// buildScenario returns the scenario function for the built-in HTTP target.
-// When checks are configured it uses DoWithResponse so the full response can be
-// asserted; otherwise it takes the lighter Get/Post/Do path.
-func buildScenario(client httpClient, method, targetURL, body string, checksCfg *checksConfig) func(context.Context) (int, error) {
-	if checksCfg == nil {
-		return func(ctx context.Context) (int, error) {
-			switch method {
-			case http.MethodGet:
-				return client.Get(ctx, targetURL)
-			case http.MethodPost:
-				return client.Post(ctx, targetURL, strings.NewReader(body))
-			default:
-				var r io.Reader
-				if body != "" {
-					r = strings.NewReader(body)
-				}
-				return client.Do(ctx, method, targetURL, r)
+// loadFeeder validates the feeder config, loads its rows, checks that every
+// {{placeholder}} in the URL and body resolves for every row (and that none
+// appear in headers), and returns a row feeder. It returns (nil, nil) when no
+// feeder is configured.
+func loadFeeder(cfg fileConfig, configDir string) (*pulse.Feeder[map[string]string], error) {
+	fc := cfg.Feeder
+	if fc == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(fc.Path) == "" {
+		return nil, errFeederPathRequired
+	}
+	if fc.Format != "csv" && fc.Format != "jsonl" {
+		return nil, errFeederUnknownFormat
+	}
+	if fc.Mode != "" && fc.Mode != "round-robin" && fc.Mode != "random" {
+		return nil, errFeederUnknownMode
+	}
+	if len(cfg.Workers) > 0 {
+		return nil, errFeederDistributed
+	}
+
+	// Header values cannot be templated (the client applies them once), so reject
+	// placeholders there instead of silently sending a literal "{{var}}".
+	for _, v := range cfg.Target.Headers {
+		if len(feederPlaceholders(v)) > 0 {
+			return nil, errFeederHeaderTemplate
+		}
+	}
+
+	// Feeder paths are resolved relative to the config file's directory (not the
+	// process CWD), so a config and its data file can live together.
+	dataPath := fc.Path
+	if !filepath.IsAbs(dataPath) {
+		dataPath = filepath.Join(configDir, dataPath)
+	}
+	rows, err := loadFeederRows(fc.Format, dataPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Every variable referenced in the URL or body must exist in every row, so a
+	// run never silently sends an unresolved placeholder.
+	needed := append(feederPlaceholders(cfg.Target.URL), feederPlaceholders(cfg.Target.Body)...)
+	for _, name := range needed {
+		for i, row := range rows {
+			if _, ok := row[name]; !ok {
+				return nil, fmt.Errorf("config: feeder row %d is missing variable %q referenced in the target", i+1, name)
 			}
 		}
 	}
 
-	checks := checksCfg.toChecks()
-	return func(ctx context.Context) (int, error) {
-		var r io.Reader
-		if body != "" {
-			r = strings.NewReader(body)
+	seed := fc.Seed
+	if seed == nil {
+		seed = cfg.Seed // fall back to the global config seed for reproducibility
+	}
+	return buildRowFeeder(rows, fc.Mode, seed), nil
+}
+
+// buildScenario returns the scenario function for the built-in HTTP target.
+// When checks are configured it uses DoWithResponse so the full response can be
+// asserted; otherwise it takes the lighter Get/Post/Do path. When feeder is
+// non-nil, each iteration draws a row and substitutes {{variable}} placeholders
+// in the URL and body.
+func buildScenario(client httpClient, method, targetURL, body string, checksCfg *checksConfig, feeder *pulse.Feeder[map[string]string]) func(context.Context) (int, error) {
+	var checks transport.Checks
+	hasChecks := checksCfg != nil
+	if hasChecks {
+		checks = checksCfg.toChecks()
+	}
+
+	// do issues one request to a (possibly templated) URL/body and applies checks.
+	do := func(ctx context.Context, url, bodyStr string) (int, error) {
+		if !hasChecks {
+			switch method {
+			case http.MethodGet:
+				return client.Get(ctx, url)
+			case http.MethodPost:
+				return client.Post(ctx, url, strings.NewReader(bodyStr))
+			default:
+				return client.Do(ctx, method, url, bodyReader(bodyStr))
+			}
 		}
-		resp, err := client.DoWithResponse(ctx, method, targetURL, r)
+		resp, err := client.DoWithResponse(ctx, method, url, bodyReader(bodyStr))
 		if err != nil {
 			return 0, err
 		}
@@ -306,6 +369,31 @@ func buildScenario(client httpClient, method, targetURL, body string, checksCfg 
 		}
 		return resp.StatusCode, nil
 	}
+
+	if feeder == nil {
+		return func(ctx context.Context) (int, error) {
+			return do(ctx, targetURL, body)
+		}
+	}
+	return func(ctx context.Context) (int, error) {
+		row := feeder.Next()
+		url, err := substituteVars(targetURL, row)
+		if err != nil {
+			return 0, err
+		}
+		b, err := substituteVars(body, row)
+		if err != nil {
+			return 0, err
+		}
+		return do(ctx, url, b)
+	}
+}
+
+func bodyReader(s string) io.Reader {
+	if s == "" {
+		return nil
+	}
+	return strings.NewReader(s)
 }
 
 // validateConfig checks the target-specific fields of a YAML config: the HTTP
