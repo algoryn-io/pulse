@@ -77,13 +77,13 @@ func (r *PrometheusReporter) serveMetrics(w http.ResponseWriter, _ *http.Request
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 
 	if done {
-		writePrometheusMetrics(w, result.RPS, result.Latency, result.Total, result.Failed)
+		writePrometheusMetrics(w, result.RPS, result.Latency, result.TTFB, result.Total, result.Failed, result.BytesIn, result.BytesOut)
 	} else {
-		writePrometheusMetrics(w, snap.RPS, snap.Latency, snap.Total, snap.Failed)
+		writePrometheusMetrics(w, snap.RPS, snap.Latency, snap.TTFB, snap.Total, snap.Failed, snap.BytesIn, snap.BytesOut)
 	}
 }
 
-func writePrometheusMetrics(w http.ResponseWriter, rps float64, lat pulse.LatencyStats, total, failed int64) {
+func writePrometheusMetrics(w http.ResponseWriter, rps float64, lat, ttfb pulse.LatencyStats, total, failed, bytesIn, bytesOut int64) {
 	var errorRate float64
 	if total > 0 {
 		errorRate = float64(failed) / float64(total)
@@ -105,6 +105,17 @@ func writePrometheusMetrics(w http.ResponseWriter, rps float64, lat pulse.Latenc
 	fmt.Fprintf(w, "pulse_latency_ms{quantile=\"0.95\"} %g\n", msf(lat.P95))
 	fmt.Fprintf(w, "pulse_latency_ms{quantile=\"0.99\"} %g\n", msf(lat.P99))
 
+	// TTFB is reported only when the transport measured it (HTTP scenarios).
+	if ttfb.P99 > 0 || ttfb.Mean > 0 {
+		fmt.Fprintf(w, "# HELP pulse_ttfb_ms Time-to-first-byte in milliseconds\n")
+		fmt.Fprintf(w, "# TYPE pulse_ttfb_ms gauge\n")
+		fmt.Fprintf(w, "pulse_ttfb_ms{quantile=\"mean\"} %g\n", msf(ttfb.Mean))
+		fmt.Fprintf(w, "pulse_ttfb_ms{quantile=\"0.50\"} %g\n", msf(ttfb.P50))
+		fmt.Fprintf(w, "pulse_ttfb_ms{quantile=\"0.90\"} %g\n", msf(ttfb.P90))
+		fmt.Fprintf(w, "pulse_ttfb_ms{quantile=\"0.95\"} %g\n", msf(ttfb.P95))
+		fmt.Fprintf(w, "pulse_ttfb_ms{quantile=\"0.99\"} %g\n", msf(ttfb.P99))
+	}
+
 	fmt.Fprintf(w, "# HELP pulse_requests_total Total requests completed\n")
 	fmt.Fprintf(w, "# TYPE pulse_requests_total counter\n")
 	fmt.Fprintf(w, "pulse_requests_total %d\n", total)
@@ -112,6 +123,14 @@ func writePrometheusMetrics(w http.ResponseWriter, rps float64, lat pulse.Latenc
 	fmt.Fprintf(w, "# HELP pulse_failed_total Failed requests\n")
 	fmt.Fprintf(w, "# TYPE pulse_failed_total counter\n")
 	fmt.Fprintf(w, "pulse_failed_total %d\n", failed)
+
+	fmt.Fprintf(w, "# HELP pulse_bytes_in_total Response bytes read\n")
+	fmt.Fprintf(w, "# TYPE pulse_bytes_in_total counter\n")
+	fmt.Fprintf(w, "pulse_bytes_in_total %d\n", bytesIn)
+
+	fmt.Fprintf(w, "# HELP pulse_bytes_out_total Request bytes sent\n")
+	fmt.Fprintf(w, "# TYPE pulse_bytes_out_total counter\n")
+	fmt.Fprintf(w, "pulse_bytes_out_total %d\n", bytesOut)
 }
 
 func msf(d time.Duration) float64 {

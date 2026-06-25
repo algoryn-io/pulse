@@ -83,10 +83,12 @@ func (r *InfluxDBReporter) snapshotLine(s pulse.Snapshot) string {
 		ts = time.Now().UnixNano()
 	}
 	return fmt.Sprintf(
-		"%s,type=snapshot rps=%g,error_rate=%g,p50_ms=%g,p99_ms=%g,mean_ms=%g,total=%di,failed=%di %d",
+		"%s,type=snapshot rps=%g,error_rate=%g,p50_ms=%g,p99_ms=%g,mean_ms=%g,ttfb_p50_ms=%g,ttfb_p99_ms=%g,bytes_in=%di,bytes_out=%di,total=%di,failed=%di %d",
 		r.cfg.Measurement,
 		s.RPS, errorRate,
 		msf(s.Latency.P50), msf(s.Latency.P99), msf(s.Latency.Mean),
+		msf(s.TTFB.P50), msf(s.TTFB.P99),
+		s.BytesIn, s.BytesOut,
 		s.Total, s.Failed,
 		ts,
 	)
@@ -102,10 +104,12 @@ func (r *InfluxDBReporter) resultLine(result pulse.Result, passed bool) string {
 		passedInt = 1
 	}
 	return fmt.Sprintf(
-		"%s,type=result rps=%g,error_rate=%g,p50_ms=%g,p99_ms=%g,mean_ms=%g,total=%di,failed=%di,passed=%di %d",
+		"%s,type=result rps=%g,error_rate=%g,p50_ms=%g,p99_ms=%g,mean_ms=%g,ttfb_p50_ms=%g,ttfb_p99_ms=%g,bytes_in=%di,bytes_out=%di,total=%di,failed=%di,passed=%di %d",
 		r.cfg.Measurement,
 		result.RPS, errorRate,
 		msf(result.Latency.P50), msf(result.Latency.P99), msf(result.Latency.Mean),
+		msf(result.TTFB.P50), msf(result.TTFB.P99),
+		result.BytesIn, result.BytesOut,
 		result.Total, result.Failed, passedInt,
 		time.Now().UnixNano(),
 	)

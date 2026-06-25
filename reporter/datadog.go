@@ -74,6 +74,10 @@ func (r *DatadogReporter) OnSnapshot(s pulse.Snapshot) {
 		r.gauge("latency.mean_ms", msf(s.Latency.Mean)),
 		r.gauge("latency.p50_ms", msf(s.Latency.P50)),
 		r.gauge("latency.p99_ms", msf(s.Latency.P99)),
+		r.gauge("ttfb.p50_ms", msf(s.TTFB.P50)),
+		r.gauge("ttfb.p99_ms", msf(s.TTFB.P99)),
+		r.count("bytes.in", s.BytesIn),
+		r.count("bytes.out", s.BytesOut),
 		r.count("requests.total", s.Total),
 		r.count("requests.failed", s.Failed),
 	)
@@ -94,8 +98,12 @@ func (r *DatadogReporter) OnResult(result pulse.Result, passed bool) {
 		r.gauge("result.error_rate", errorRate),
 		r.gauge("result.latency.mean_ms", msf(result.Latency.Mean)),
 		r.gauge("result.latency.p99_ms", msf(result.Latency.P99)),
+		r.gauge("result.ttfb.p50_ms", msf(result.TTFB.P50)),
+		r.gauge("result.ttfb.p99_ms", msf(result.TTFB.P99)),
 		r.gauge("result.duration_ms", float64(result.Duration/time.Millisecond)),
 		r.gauge("result.passed", passedVal),
+		r.count("result.bytes.in", result.BytesIn),
+		r.count("result.bytes.out", result.BytesOut),
 		r.count("result.requests.total", result.Total),
 		r.count("result.requests.failed", result.Failed),
 	)

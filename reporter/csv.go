@@ -18,6 +18,8 @@ var csvColumns = []string{
 	"total", "failed", "dropped", "dropped_rate", "max_active",
 	"min_ms", "mean_ms", "p50_ms", "p90_ms", "p95_ms", "p99_ms", "max_ms",
 	"duration_ms", "passed",
+	// Appended columns (stable order: new columns are added at the end).
+	"ttfb_p50_ms", "ttfb_p99_ms", "bytes_in", "bytes_out",
 }
 
 // CSVConfig configures a CSVReporter.
@@ -70,15 +72,15 @@ func (r *CSVReporter) OnSnapshot(s pulse.Snapshot) {
 		return
 	}
 	row := metricRow("snapshot", s.RPS, s.Total, s.Failed, s.Dropped, s.DroppedRate,
-		s.MaxActive, s.Latency, s.Duration, "")
+		s.MaxActive, s.Latency, s.TTFB, s.BytesIn, s.BytesOut, s.Duration, "")
 	r.writeRow(row)
 }
 
 // OnResult implements pulse.Reporter. Writes the final summary row.
 func (r *CSVReporter) OnResult(result pulse.Result, passed bool) {
 	row := metricRow("result", result.RPS, result.Total, result.Failed, result.Dropped,
-		result.DroppedRate, result.MaxActive, result.Latency, result.Duration,
-		strconv.FormatBool(passed))
+		result.DroppedRate, result.MaxActive, result.Latency, result.TTFB, result.BytesIn,
+		result.BytesOut, result.Duration, strconv.FormatBool(passed))
 	r.writeRow(row)
 }
 
@@ -92,7 +94,7 @@ func (r *CSVReporter) writeRow(row []string) {
 // metricRow formats a single CSV record in csvColumns order. passed is left
 // empty for snapshot rows.
 func metricRow(kind string, rps float64, total, failed, dropped int64, droppedRate float64,
-	maxActive int64, lat pulse.LatencyStats, duration time.Duration, passed string) []string {
+	maxActive int64, lat, ttfb pulse.LatencyStats, bytesIn, bytesOut int64, duration time.Duration, passed string) []string {
 
 	var errorRate float64
 	if total > 0 {
@@ -116,6 +118,10 @@ func metricRow(kind string, rps float64, total, failed, dropped int64, droppedRa
 		strconv.FormatFloat(msf(lat.Max), 'g', -1, 64),
 		strconv.FormatFloat(msf(duration), 'g', -1, 64),
 		passed,
+		strconv.FormatFloat(msf(ttfb.P50), 'g', -1, 64),
+		strconv.FormatFloat(msf(ttfb.P99), 'g', -1, 64),
+		strconv.FormatInt(bytesIn, 10),
+		strconv.FormatInt(bytesOut, 10),
 	}
 }
 

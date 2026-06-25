@@ -927,7 +927,10 @@ type dashboardSnapshotDTO struct {
 	DroppedRate float64   `json:"dropped_rate"`
 	Completed   int64     `json:"completed"`
 	MaxActive   int64     `json:"max_active"`
+	BytesIn     int64     `json:"bytes_in"`
+	BytesOut    int64     `json:"bytes_out"`
 	Latency     dashboardLatencyDTO `json:"latency"`
+	TTFB        dashboardLatencyDTO `json:"ttfb"`
 }
 
 type dashboardLatencyDTO struct {
@@ -947,8 +950,23 @@ type dashboardResultDTO struct {
 	RPS         float64             `json:"rps"`
 	Dropped     int64               `json:"dropped"`
 	DroppedRate float64             `json:"dropped_rate"`
+	BytesIn     int64               `json:"bytes_in"`
+	BytesOut    int64               `json:"bytes_out"`
 	Latency     dashboardLatencyDTO `json:"latency"`
+	TTFB        dashboardLatencyDTO `json:"ttfb"`
 	Passed      bool                `json:"passed"`
+}
+
+func toDashboardLatency(l LatencyStats) dashboardLatencyDTO {
+	return dashboardLatencyDTO{
+		MinNs:  int64(l.Min),
+		MeanNs: int64(l.Mean),
+		P50Ns:  int64(l.P50),
+		P90Ns:  int64(l.P90),
+		P95Ns:  int64(l.P95),
+		P99Ns:  int64(l.P99),
+		MaxNs:  int64(l.Max),
+	}
 }
 
 func snapshotToDTO(s Snapshot) dashboardSnapshotDTO {
@@ -964,15 +982,10 @@ func snapshotToDTO(s Snapshot) dashboardSnapshotDTO {
 		DroppedRate: s.DroppedRate,
 		Completed:   s.Completed,
 		MaxActive:   s.MaxActive,
-		Latency: dashboardLatencyDTO{
-			MinNs:  int64(s.Latency.Min),
-			MeanNs: int64(s.Latency.Mean),
-			P50Ns:  int64(s.Latency.P50),
-			P90Ns:  int64(s.Latency.P90),
-			P95Ns:  int64(s.Latency.P95),
-			P99Ns:  int64(s.Latency.P99),
-			MaxNs:  int64(s.Latency.Max),
-		},
+		BytesIn:     s.BytesIn,
+		BytesOut:    s.BytesOut,
+		Latency:     toDashboardLatency(s.Latency),
+		TTFB:        toDashboardLatency(s.TTFB),
 	}
 }
 
@@ -984,16 +997,11 @@ func resultToDTO(r Result, passed bool) dashboardResultDTO {
 		RPS:         r.RPS,
 		Dropped:     r.Dropped,
 		DroppedRate: r.DroppedRate,
+		BytesIn:     r.BytesIn,
+		BytesOut:    r.BytesOut,
 		Passed:      passed,
-		Latency: dashboardLatencyDTO{
-			MinNs:  int64(r.Latency.Min),
-			MeanNs: int64(r.Latency.Mean),
-			P50Ns:  int64(r.Latency.P50),
-			P90Ns:  int64(r.Latency.P90),
-			P95Ns:  int64(r.Latency.P95),
-			P99Ns:  int64(r.Latency.P99),
-			MaxNs:  int64(r.Latency.Max),
-		},
+		Latency:     toDashboardLatency(r.Latency),
+		TTFB:        toDashboardLatency(r.TTFB),
 	}
 }
 

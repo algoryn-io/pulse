@@ -32,6 +32,10 @@ type OTelReporter struct {
 	p90       metric.Float64Gauge
 	p95       metric.Float64Gauge
 	p99       metric.Float64Gauge
+	ttfbP50   metric.Float64Gauge
+	ttfbP99   metric.Float64Gauge
+	bytesIn   metric.Int64Gauge
+	bytesOut  metric.Int64Gauge
 	total     metric.Int64Gauge
 	failed    metric.Int64Gauge
 }
@@ -77,6 +81,30 @@ func NewOTelReporter(provider metric.MeterProvider) (*OTelReporter, error) {
 	if err != nil {
 		return nil, err
 	}
+	ttfbP50, err := meter.Float64Gauge("pulse.ttfb.p50",
+		metric.WithDescription("P50 time-to-first-byte"),
+		metric.WithUnit("ms"))
+	if err != nil {
+		return nil, err
+	}
+	ttfbP99, err := meter.Float64Gauge("pulse.ttfb.p99",
+		metric.WithDescription("P99 time-to-first-byte"),
+		metric.WithUnit("ms"))
+	if err != nil {
+		return nil, err
+	}
+	bytesIn, err := meter.Int64Gauge("pulse.bytes.in",
+		metric.WithDescription("Response bytes read"),
+		metric.WithUnit("By"))
+	if err != nil {
+		return nil, err
+	}
+	bytesOut, err := meter.Int64Gauge("pulse.bytes.out",
+		metric.WithDescription("Request bytes sent"),
+		metric.WithUnit("By"))
+	if err != nil {
+		return nil, err
+	}
 	total, err := meter.Int64Gauge("pulse.requests.total",
 		metric.WithDescription("Total requests completed"))
 	if err != nil {
@@ -91,6 +119,8 @@ func NewOTelReporter(provider metric.MeterProvider) (*OTelReporter, error) {
 	return &OTelReporter{
 		rps: rps, errorRate: errorRate,
 		p50: p50, p90: p90, p95: p95, p99: p99,
+		ttfbP50: ttfbP50, ttfbP99: ttfbP99,
+		bytesIn: bytesIn, bytesOut: bytesOut,
 		total: total, failed: failed,
 	}, nil
 }
@@ -98,16 +128,16 @@ func NewOTelReporter(provider metric.MeterProvider) (*OTelReporter, error) {
 // OnSnapshot implements pulse.Reporter. Records live metrics at each interval.
 func (r *OTelReporter) OnSnapshot(s pulse.Snapshot) {
 	ctx := context.Background()
-	r.record(ctx, s.RPS, s.Latency, s.Total, s.Failed)
+	r.record(ctx, s.RPS, s.Latency, s.TTFB, s.Total, s.Failed, s.BytesIn, s.BytesOut)
 }
 
 // OnResult implements pulse.Reporter. Records final metrics after the run.
 func (r *OTelReporter) OnResult(result pulse.Result, _ bool) {
 	ctx := context.Background()
-	r.record(ctx, result.RPS, result.Latency, result.Total, result.Failed)
+	r.record(ctx, result.RPS, result.Latency, result.TTFB, result.Total, result.Failed, result.BytesIn, result.BytesOut)
 }
 
-func (r *OTelReporter) record(ctx context.Context, rps float64, lat pulse.LatencyStats, total, failed int64) {
+func (r *OTelReporter) record(ctx context.Context, rps float64, lat, ttfb pulse.LatencyStats, total, failed, bytesIn, bytesOut int64) {
 	var errRate float64
 	if total > 0 {
 		errRate = float64(failed) / float64(total)
@@ -118,6 +148,10 @@ func (r *OTelReporter) record(ctx context.Context, rps float64, lat pulse.Latenc
 	r.p90.Record(ctx, ms(lat.P90))
 	r.p95.Record(ctx, ms(lat.P95))
 	r.p99.Record(ctx, ms(lat.P99))
+	r.ttfbP50.Record(ctx, ms(ttfb.P50))
+	r.ttfbP99.Record(ctx, ms(ttfb.P99))
+	r.bytesIn.Record(ctx, bytesIn)
+	r.bytesOut.Record(ctx, bytesOut)
 	r.total.Record(ctx, total)
 	r.failed.Record(ctx, failed)
 }
