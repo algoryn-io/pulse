@@ -84,11 +84,19 @@ type jsonSnapshot struct {
 	Errors      map[string]int64 `json:"errors"`
 }
 
+type jsonStress struct {
+	MaxHealthyRPS int    `json:"max_healthy_rps"`
+	FailedAtRPS   int    `json:"failed_at_rps"`
+	Reason        string `json:"reason"`
+	Failed        bool   `json:"failed"`
+}
+
 type jsonResult struct {
 	SchemaVersion    int                `json:"schema_version"`
 	Summary          jsonSummary        `json:"summary"`
 	Latency          jsonLatency        `json:"latency"`
 	TTFB             jsonLatency        `json:"ttfb"`
+	Stress           *jsonStress        `json:"stress,omitempty"`
 	StatusCodes      map[string]int64   `json:"status_codes"`
 	Errors           map[string]int64   `json:"errors"`
 	ExtraPercentiles map[string]float64 `json:"extra_percentiles,omitempty"`
@@ -619,6 +627,16 @@ func writeText(w io.Writer, result pulse.Result, quiet bool) {
 			humanBytes(int64(bytesPerSecond(result.BytesOut, result.Duration))))
 	}
 
+	if s := result.Stress; s != nil {
+		fmt.Fprintln(w)
+		if s.Failed {
+			fmt.Fprintf(w, "Capacity (stress): failed at %d RPS — max healthy %d RPS (reason: %s)\n",
+				s.FailedAtRPS, s.MaxHealthyRPS, s.Reason)
+		} else {
+			fmt.Fprintf(w, "Capacity (stress): no failure within bounds — sustained %d RPS\n", s.MaxHealthyRPS)
+		}
+	}
+
 	if len(result.ExtraPercentiles) > 0 {
 		labels := make([]string, 0, len(result.ExtraPercentiles))
 		for label := range result.ExtraPercentiles {
@@ -716,6 +734,7 @@ func toJSONResult(result pulse.Result, passed bool) jsonResult {
 		Summary:          toJSONSummary(result.Total, result.Failed, result.RPS, result.Duration, result.Scheduled, result.Started, result.Dropped, result.DroppedRate, result.Completed, result.MaxActive, result.BytesIn, result.BytesOut),
 		Latency:          toJSONLatency(result.Latency),
 		TTFB:             toJSONLatency(result.TTFB),
+		Stress:           toJSONStress(result.Stress),
 		StatusCodes:      toJSONCountMap(result.StatusCounts),
 		Errors:           cloneStringCountMap(result.ErrorCounts),
 		ExtraPercentiles: toJSONPercentiles(result.ExtraPercentiles),
@@ -759,6 +778,18 @@ func toJSONSummary(total, failed int64, rps float64, duration time.Duration, sch
 		BytesOut:       bytesOut,
 		BytesInPerSec:  bytesPerSecond(bytesIn, duration),
 		BytesOutPerSec: bytesPerSecond(bytesOut, duration),
+	}
+}
+
+func toJSONStress(s *pulse.StressResult) *jsonStress {
+	if s == nil {
+		return nil
+	}
+	return &jsonStress{
+		MaxHealthyRPS: s.MaxHealthyRPS,
+		FailedAtRPS:   s.FailedAtRPS,
+		Reason:        s.Reason,
+		Failed:        s.Failed,
 	}
 }
 

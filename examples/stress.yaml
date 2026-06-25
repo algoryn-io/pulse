@@ -1,0 +1,32 @@
+# Ramp-to-failure (capacity discovery): start at the phase's arrival rate and
+# climb by stepRPS every healthy interval until the target's error rate or P99
+# latency breaches a threshold, then stop and report the sustained capacity.
+#
+# The phase duration is a safety ceiling; the run usually stops sooner.
+# Set maxConcurrency high enough that the arrival rate, not the generator, is the
+# bottleneck. Stress mode requires reporting.interval > 0 and is not supported in
+# distributed mode (workers).
+#
+#   go run ./cmd/mockserver --mode slow --slow-delay 60ms
+#   go run ./cmd/pulse run examples/stress.yaml
+phases:
+  - type: constant
+    duration: 5m          # ceiling; ramp-to-failure normally stops earlier
+    arrivalRate: 50       # starting rate
+
+maxConcurrency: 500
+
+target:
+  method: GET
+  url: http://127.0.0.1:8080
+
+reporting:
+  interval: 1s
+
+stress:
+  stepRPS: 50             # +50 RPS after each healthy interval
+  maxRPS: 5000            # safety ceiling (0 = uncapped)
+  maxErrorRate: 0.02      # fail if > 2% of requests error in an interval
+  maxP99: 250ms           # fail if interval P99 latency exceeds this
+  sustainedIntervals: 2   # require 2 consecutive breached intervals (noise guard)
+  minRequests: 20         # ignore intervals with fewer completed requests
