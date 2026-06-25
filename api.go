@@ -255,6 +255,13 @@ type Result struct {
 	Completed         int64
 	MaxActive         int64
 	Latency           LatencyStats
+	// TTFB holds time-to-first-byte statistics for HTTP scenarios. Zero-valued
+	// when the transport did not report a first-byte time.
+	TTFB LatencyStats
+	// BytesIn and BytesOut are the total response and request bytes observed
+	// across the run. Throughput is BytesIn / Duration (and BytesOut / Duration).
+	BytesIn           int64
+	BytesOut          int64
 	StatusCounts      map[int]int64
 	ErrorCounts       map[string]int64
 	ThresholdOutcomes []ThresholdOutcome `json:"-"`
@@ -279,6 +286,9 @@ type Snapshot struct {
 	Completed    int64
 	MaxActive    int64
 	Latency      LatencyStats
+	TTFB         LatencyStats
+	BytesIn      int64
+	BytesOut     int64
 	StatusCounts map[int]int64
 	ErrorCounts  map[string]int64
 }
@@ -613,6 +623,9 @@ func toSnapshots(snapshots []metrics.Snapshot) []Snapshot {
 			Completed:    snapshot.Completed,
 			MaxActive:    snapshot.MaxActive,
 			Latency:      toLatencyStats(snapshot.Latency),
+			TTFB:         toLatencyStats(snapshot.TTFB),
+			BytesIn:      snapshot.BytesIn,
+			BytesOut:     snapshot.BytesOut,
 			StatusCounts: snapshot.StatusCounts,
 			ErrorCounts:  snapshot.ErrorCounts,
 		}
@@ -807,15 +820,10 @@ func metricsResultToResult(m metrics.Result) Result {
 		ErrorCounts:      m.ErrorCounts,
 		Snapshots:        toSnapshots(m.Snapshots),
 		ExtraPercentiles: m.ExtraPercentiles,
-		Latency: LatencyStats{
-			Min:  m.Latency.Min,
-			Mean: m.Latency.Mean,
-			P50:  m.Latency.P50,
-			P90:  m.Latency.P90,
-			P95:  m.Latency.P95,
-			P99:  m.Latency.P99,
-			Max:  m.Latency.Max,
-		},
+		BytesIn:          m.BytesIn,
+		BytesOut:         m.BytesOut,
+		Latency:          toLatencyStats(m.Latency),
+		TTFB:             toLatencyStats(m.TTFB),
 	}
 }
 

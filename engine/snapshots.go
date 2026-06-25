@@ -64,7 +64,7 @@ func (c *snapshotCollector) recordDropped(at time.Time) {
 	c.windowLocked(at).dropped++
 }
 
-func (c *snapshotCollector) recordCompleted(at time.Time, latency time.Duration, statusCode int, err error) {
+func (c *snapshotCollector) recordCompleted(at time.Time, latency, ttfb time.Duration, bytesIn, bytesOut int64, statusCode int, err error) {
 	if c == nil {
 		return
 	}
@@ -74,7 +74,7 @@ func (c *snapshotCollector) recordCompleted(at time.Time, latency time.Duration,
 	if window.aggregator == nil {
 		window.aggregator = metrics.NewAggregator()
 	}
-	window.aggregator.Record(latency, statusCode, err)
+	window.aggregator.RecordFull(latency, ttfb, bytesIn, bytesOut, statusCode, err)
 }
 
 func (c *snapshotCollector) snapshots(duration time.Duration) []metrics.Snapshot {
@@ -114,6 +114,9 @@ func (c *snapshotCollector) snapshots(duration time.Duration) []metrics.Snapshot
 				snapshot.RPS = aggregated.RPS
 				snapshot.Completed = aggregated.Total
 				snapshot.Latency = aggregated.Latency
+				snapshot.TTFB = aggregated.TTFB
+				snapshot.BytesIn = aggregated.BytesIn
+				snapshot.BytesOut = aggregated.BytesOut
 				snapshot.StatusCounts = aggregated.StatusCounts
 				snapshot.ErrorCounts = aggregated.ErrorCounts
 			}
@@ -167,6 +170,9 @@ func (c *snapshotCollector) liveSnapshot(now time.Time) metrics.Snapshot {
 		snap.RPS = aggregated.RPS
 		snap.Completed = aggregated.Total
 		snap.Latency = aggregated.Latency
+		snap.TTFB = aggregated.TTFB
+		snap.BytesIn = aggregated.BytesIn
+		snap.BytesOut = aggregated.BytesOut
 		snap.StatusCounts = aggregated.StatusCounts
 		snap.ErrorCounts = aggregated.ErrorCounts
 	}

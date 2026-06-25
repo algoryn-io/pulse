@@ -6,7 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptrace"
 	"time"
+
+	"algoryn.io/pulse/internal/reqmetrics"
 )
 
 const (
@@ -181,10 +184,13 @@ func (c *HTTPClient) Do(ctx context.Context, method, url string, body io.Reader)
 }
 
 func (c *HTTPClient) do(ctx context.Context, method, url string, body io.Reader) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	start := time.Now()
+	tctx, ts := newTrace(ctx, start)
+	req, err := http.NewRequestWithContext(tctx, method, url, body)
 	if err != nil {
 		return 0, err
 	}
+	bytesOut := requestBodyBytes(req)
 
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
@@ -205,6 +211,7 @@ func (c *HTTPClient) do(ctx context.Context, method, url string, body io.Reader)
 	}
 	limited := io.LimitReader(resp.Body, maxResponseBytes+1)
 	written, err := io.Copy(io.Discard, limited)
+	observe(ctx, ts.ttfb(), written, bytesOut)
 	if err != nil {
 		return resp.StatusCode, err
 	}
@@ -217,4 +224,45 @@ func (c *HTTPClient) do(ctx context.Context, method, url string, body io.Reader)
 	}
 
 	return resp.StatusCode, nil
+}
+
+// traceState captures per-request timing for time-to-first-byte via httptrace.
+type traceState struct {
+	start     time.Time
+	firstByte time.Time
+}
+
+// newTrace returns a context that records when the first response byte arrives,
+// plus the state to read it back. start is the moment the request begins so TTFB
+// is measured consistently with the surrounding latency.
+func newTrace(ctx context.Context, start time.Time) (context.Context, *traceState) {
+	ts := &traceState{start: start}
+	trace := &httptrace.ClientTrace{
+		GotFirstResponseByte: func() { ts.firstByte = time.Now() },
+	}
+	return httptrace.WithClientTrace(ctx, trace), ts
+}
+
+// ttfb returns the observed time-to-first-byte, or 0 if no response byte arrived.
+func (ts *traceState) ttfb() time.Duration {
+	if ts.firstByte.IsZero() {
+		return 0
+	}
+	return ts.firstByte.Sub(ts.start)
+}
+
+// requestBodyBytes reports the request body size when the http package could
+// determine it (Content-Length >= 0), used for outbound byte accounting.
+func requestBodyBytes(req *http.Request) int64 {
+	if req.ContentLength > 0 {
+		return req.ContentLength
+	}
+	return 0
+}
+
+// observe writes transport observations into the per-iteration Sample carried by
+// ctx, if the engine attached one. It is a no-op for scenarios run outside the
+// engine (nil Sample).
+func observe(ctx context.Context, ttfb time.Duration, bytesIn, bytesOut int64) {
+	reqmetrics.FromContext(ctx).Observe(ttfb, bytesIn, bytesOut)
 }

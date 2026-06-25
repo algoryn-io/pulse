@@ -36,6 +36,14 @@ func Merge(results []distributed.WorkerResult) metrics.Result {
 		statusCounts  = make(map[int]int64)
 		errorCounts   = make(map[string]int64)
 		mergedBuckets = make([]uint64, stats.NumBuckets)
+
+		bytesIn           int64
+		bytesOut          int64
+		ttfbMin           time.Duration
+		ttfbMax           time.Duration
+		ttfbWeightedMean  float64
+		ttfbWeightTotal   int64
+		ttfbMergedBuckets = make([]uint64, stats.NumBuckets)
 	)
 
 	for _, r := range results {
@@ -45,6 +53,8 @@ func Merge(results []distributed.WorkerResult) metrics.Result {
 		started += r.Started
 		dropped += r.Dropped
 		completed += r.Completed
+		bytesIn += r.BytesIn
+		bytesOut += r.BytesOut
 
 		if r.MaxActive > maxActive {
 			maxActive = r.MaxActive
@@ -73,6 +83,11 @@ func Merge(results []distributed.WorkerResult) metrics.Result {
 				mergedBuckets[i] += v
 			}
 		}
+		if len(r.TTFBBuckets) == stats.NumBuckets {
+			for i, v := range r.TTFBBuckets {
+				ttfbMergedBuckets[i] += v
+			}
+		}
 
 		// Track global latency extremes across workers.
 		if r.Total > 0 {
@@ -84,6 +99,18 @@ func Merge(results []distributed.WorkerResult) metrics.Result {
 			}
 			// Accumulate weighted mean (weight = per-worker request count).
 			weightedMean += float64(r.Latency.Mean.Nanoseconds()) * float64(r.Total)
+		}
+
+		// TTFB extremes and weighted mean across workers that reported it.
+		if r.TTFB.Max > 0 {
+			if ttfbMin == 0 || (r.TTFB.Min > 0 && r.TTFB.Min < ttfbMin) {
+				ttfbMin = r.TTFB.Min
+			}
+			if r.TTFB.Max > ttfbMax {
+				ttfbMax = r.TTFB.Max
+			}
+			ttfbWeightedMean += float64(r.TTFB.Mean.Nanoseconds()) * float64(r.Total)
+			ttfbWeightTotal += r.Total
 		}
 	}
 
@@ -140,6 +167,36 @@ func Merge(results []distributed.WorkerResult) metrics.Result {
 		}
 	}
 
+	// Merge the TTFB histogram (only when at least one worker reported it).
+	var ttfb metrics.LatencyStats
+	if ttfbMax > 0 {
+		ttfbEng := stats.NewEngine()
+		defer ttfbEng.Close()
+		ttfbEng.ImportBuckets(ttfbMergedBuckets)
+		ttfbClamp := func(d time.Duration) time.Duration {
+			if d < ttfbMin {
+				return ttfbMin
+			}
+			if d > ttfbMax {
+				return ttfbMax
+			}
+			return d
+		}
+		var ttfbMean float64
+		if ttfbWeightTotal > 0 {
+			ttfbMean = ttfbWeightedMean / float64(ttfbWeightTotal)
+		}
+		ttfb = metrics.LatencyStats{
+			Min:  ttfbMin,
+			Max:  ttfbMax,
+			Mean: time.Duration(math.Round(ttfbMean)),
+			P50:  ttfbClamp(nsDuration(ttfbEng.GetPercentile(50))),
+			P90:  ttfbClamp(nsDuration(ttfbEng.GetPercentile(90))),
+			P95:  ttfbClamp(nsDuration(ttfbEng.GetPercentile(95))),
+			P99:  ttfbClamp(nsDuration(ttfbEng.GetPercentile(99))),
+		}
+	}
+
 	return metrics.Result{
 		Total:        total,
 		Failed:       failed,
@@ -152,8 +209,12 @@ func Merge(results []distributed.WorkerResult) metrics.Result {
 		Completed:    completed,
 		MaxActive:    maxActive,
 		Latency:      latency,
+		TTFB:         ttfb,
+		BytesIn:      bytesIn,
+		BytesOut:     bytesOut,
 		StatusCounts: statusCounts,
 		ErrorCounts:  errorCounts,
 		Buckets:      mergedBuckets,
+		TTFBBuckets:  ttfbMergedBuckets,
 	}
 }

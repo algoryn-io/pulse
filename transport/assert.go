@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 // Response holds a completed HTTP response with the body pre-read into memory.
@@ -23,10 +24,13 @@ type Response struct {
 // to enforce expected codes. The body is read into memory (up to
 // MaxResponseBytes) so assertion helpers can inspect it without re-reading.
 func (c *HTTPClient) DoWithResponse(ctx context.Context, method, url string, body io.Reader) (*Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	start := time.Now()
+	tctx, ts := newTrace(ctx, start)
+	req, err := http.NewRequestWithContext(tctx, method, url, body)
 	if err != nil {
 		return nil, err
 	}
+	bytesOut := requestBodyBytes(req)
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
@@ -45,6 +49,7 @@ func (c *HTTPClient) DoWithResponse(ctx context.Context, method, url string, bod
 	}
 	limited := io.LimitReader(resp.Body, maxBytes+1)
 	b, err := io.ReadAll(limited)
+	observe(ctx, ts.ttfb(), int64(len(b)), bytesOut)
 	if err != nil {
 		return nil, err
 	}

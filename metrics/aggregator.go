@@ -38,6 +38,15 @@ type Result struct {
 	// to merge per-worker histograms before computing cross-worker percentiles.
 	// Callers that only need latency percentiles can ignore this field.
 	Buckets []uint64
+	// TTFB holds time-to-first-byte statistics, populated when the transport
+	// reported a first-byte time (HTTP scenarios). Zero-valued for transports
+	// that do not report it (e.g. custom or gRPC scenarios).
+	TTFB LatencyStats
+	// TTFBBuckets is the raw TTFB histogram, mirroring Buckets for distributed merge.
+	TTFBBuckets []uint64
+	// BytesIn and BytesOut are the total response and request bytes observed.
+	BytesIn  int64
+	BytesOut int64
 }
 
 // Snapshot contains metrics observed during one reporting interval.
@@ -57,6 +66,9 @@ type Snapshot struct {
 	Completed    int64
 	MaxActive    int64
 	Latency      LatencyStats
+	TTFB         LatencyStats
+	BytesIn      int64
+	BytesOut     int64
 	StatusCounts map[int]int64
 	ErrorCounts  map[string]int64
 }
@@ -74,6 +86,18 @@ type Aggregator struct {
 	statusCounts map[int]int64
 	errorCounts  map[string]int64
 	percentiles  []float64 // extra percentiles to report, in (0,100)
+
+	// Time-to-first-byte uses its own histogram so its percentiles are
+	// independent of total latency. ttfbTotal counts only samples where a
+	// first-byte time was reported (HTTP scenarios).
+	ttfbEngine    *stats.Engine
+	ttfbTotal     int64
+	ttfbMeanNanos float64
+	ttfbMin       time.Duration
+	ttfbMax       time.Duration
+
+	bytesIn  int64
+	bytesOut int64
 }
 
 // NewAggregator creates an empty metrics aggregator and allocates the native
@@ -94,14 +118,24 @@ func NewAggregatorWithPercentiles(percentiles []float64) *Aggregator {
 	}
 	return &Aggregator{
 		engine:       stats.NewEngine(),
+		ttfbEngine:   stats.NewEngine(),
 		statusCounts: make(map[int]int64),
 		errorCounts:  make(map[string]int64),
 		percentiles:  ps,
 	}
 }
 
-// Record stores metrics for a single execution.
+// Record stores metrics for a single execution without transport-level detail.
+// It is equivalent to RecordFull with no TTFB or byte observations.
 func (a *Aggregator) Record(latency time.Duration, statusCode int, err error) {
+	a.RecordFull(latency, 0, 0, 0, statusCode, err)
+}
+
+// RecordFull stores metrics for a single execution including time-to-first-byte
+// and request/response byte counts. A ttfb <= 0 is treated as "not observed"
+// and excluded from TTFB statistics, so transports that do not report it (custom
+// or gRPC scenarios) leave the TTFB histogram empty without skewing it toward zero.
+func (a *Aggregator) RecordFull(latency, ttfb time.Duration, bytesIn, bytesOut int64, statusCode int, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed || a.engine == nil {
@@ -126,8 +160,26 @@ func (a *Aggregator) Record(latency time.Duration, statusCode int, err error) {
 	if latency > a.maxLatency {
 		a.maxLatency = latency
 	}
-
 	a.engine.RecordLatency(latency.Nanoseconds())
+
+	if bytesIn > 0 {
+		a.bytesIn += bytesIn
+	}
+	if bytesOut > 0 {
+		a.bytesOut += bytesOut
+	}
+
+	if ttfb > 0 && a.ttfbEngine != nil {
+		a.ttfbTotal++
+		a.ttfbMeanNanos += (float64(ttfb.Nanoseconds()) - a.ttfbMeanNanos) / float64(a.ttfbTotal)
+		if a.ttfbTotal == 1 || ttfb < a.ttfbMin {
+			a.ttfbMin = ttfb
+		}
+		if ttfb > a.ttfbMax {
+			a.ttfbMax = ttfb
+		}
+		a.ttfbEngine.RecordLatency(ttfb.Nanoseconds())
+	}
 }
 
 // Result returns the aggregated metrics snapshot. Multiple calls with no
@@ -141,6 +193,8 @@ func (a *Aggregator) Result(duration time.Duration) Result {
 		Total:    a.total,
 		Failed:   a.failed,
 		Duration: duration,
+		BytesIn:  a.bytesIn,
+		BytesOut: a.bytesOut,
 	}
 	if duration > 0 {
 		result.RPS = float64(a.total) / duration.Seconds()
@@ -168,6 +222,19 @@ func (a *Aggregator) Result(duration time.Duration) Result {
 		result.ExtraPercentiles = extra
 	}
 
+	if a.ttfbTotal > 0 && a.ttfbEngine != nil {
+		result.TTFB = LatencyStats{
+			Min:  a.ttfbMin,
+			Max:  a.ttfbMax,
+			Mean: time.Duration(math.Round(a.ttfbMeanNanos)),
+			P50:  clampDuration(nsToDuration(a.ttfbEngine.GetPercentile(50)), a.ttfbMin, a.ttfbMax),
+			P90:  clampDuration(nsToDuration(a.ttfbEngine.GetPercentile(90)), a.ttfbMin, a.ttfbMax),
+			P95:  clampDuration(nsToDuration(a.ttfbEngine.GetPercentile(95)), a.ttfbMin, a.ttfbMax),
+			P99:  clampDuration(nsToDuration(a.ttfbEngine.GetPercentile(99)), a.ttfbMin, a.ttfbMax),
+		}
+		result.TTFBBuckets = a.ttfbEngine.ExportBuckets()
+	}
+
 	result.StatusCounts = copyInt64MapByInt(a.statusCounts)
 	result.ErrorCounts = copyInt64MapByString(a.errorCounts)
 	result.Buckets = a.engine.ExportBuckets()
@@ -192,6 +259,10 @@ func (a *Aggregator) Close() {
 	if a.engine != nil {
 		a.engine.Close()
 		a.engine = nil
+	}
+	if a.ttfbEngine != nil {
+		a.ttfbEngine.Close()
+		a.ttfbEngine = nil
 	}
 	a.closed = true
 }

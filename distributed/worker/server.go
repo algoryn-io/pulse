@@ -212,9 +212,21 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 			P99:  result.Latency.P99,
 			Max:  result.Latency.Max,
 		},
+		TTFB: distributed.LatencyStats{
+			Min:  result.TTFB.Min,
+			Mean: result.TTFB.Mean,
+			P50:  result.TTFB.P50,
+			P90:  result.TTFB.P90,
+			P95:  result.TTFB.P95,
+			P99:  result.TTFB.P99,
+			Max:  result.TTFB.Max,
+		},
+		BytesIn:      result.BytesIn,
+		BytesOut:     result.BytesOut,
 		StatusCounts: statusCounts,
 		ErrorCounts:  result.ErrorCounts,
 		Buckets:      result.Buckets,
+		TTFBBuckets:  result.TTFBBuckets,
 	}
 
 	writeJSON(w, workerResult, http.StatusOK)
