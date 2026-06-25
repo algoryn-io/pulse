@@ -50,6 +50,8 @@ Load-fidelity fields (`scheduled`, `started`, `dropped`, `dropped_rate`, `comple
 | **Correlations** | `pulse.Extractor[T]` passes values extracted in one step (e.g. auth token from login) to subsequent steps. `transport.ExtractHeader`, `ExtractJSONString`, and `ExtractRegexp` pull values from a `*Response`. |
 | **HAR import** | `har.LoadFile(path, cfg)` converts an HTTP Archive file into a `pulse.Scenario` that replays all recorded requests in sequence. Filter entries, supply a custom client, and use recorded Auth headers as-is. |
 | **gRPC support** | `transport.NewGRPCClient` dials a gRPC server (insecure / TLS). `transport.CallGRPC(fn)` wraps a gRPC call and maps gRPC status codes to HTTP-equivalent integers so Pulse thresholds work across both transports. |
+| **WebSocket support** | `transport.NewWebSocketClient` dials `ws://`/`wss://`; `Send`/`Receive`/`Roundtrip` exchange messages, feed byte throughput metrics, and honor context deadlines. `transport.CallWebSocket(fn)` adapts to the `(statusCode, error)` shape. |
+| **Multipart uploads** | `transport.BuildMultipart(fields, files)` assembles a `multipart/form-data` body + Content-Type; `HTTPClient.DoMultipart` sends it per request for file-upload load tests. |
 | **Scenario chaining** | `pulse.Sequence(steps...)` and `pulse.Flow(steps...)` compose multiple scenario functions into a single user journey. `Flow` wraps errors with the step name for easy identification. |
 | **Data injection** | `pulse.NewFeeder[T](items)` supplies parameterized values (user IDs, payloads, tokens) to concurrent scenario invocations round-robin. `pulse.NewFeederFunc[T](fn)` supports generated or random data. Both are generic and allocation-free in the hot path. |
 | **Response assertions** | `transport.HTTPClient.DoWithResponse` returns a `*transport.Response` (status, headers, pre-read body). Use `AssertStatus`, `AssertBodyContains`, `AssertBodyJSON`, and `AssertHeader` to validate responses inside scenarios. |
@@ -458,6 +460,45 @@ scenario := func(ctx context.Context) (int, error) {
 ```
 
 gRPC status codes map to HTTP-equivalent integers (`NOT_FOUND` → 404, `UNAUTHENTICATED` → 401, `RESOURCE_EXHAUSTED` → 429, etc.) so existing Pulse thresholds and error metrics work without changes.
+
+### WebSocket support
+
+`transport.NewWebSocketClient` dials a `ws://` or `wss://` endpoint. Send and receive messages inside a scenario; bytes flow into Pulse's throughput metrics, and a context deadline (e.g. from `target.timeout`) bounds each `Send`/`Receive`. `Roundtrip` covers the common request/response pattern; `CallWebSocket` adapts it to the `(statusCode, error)` shape.
+
+```go
+scenario := func(ctx context.Context) (int, error) {
+    ws, err := transport.NewWebSocketClient(transport.WebSocketConfig{URL: "ws://localhost:8080/echo"})
+    if err != nil {
+        return 0, err
+    }
+    defer ws.Close()
+    return transport.CallWebSocket(func() error {
+        _, err := ws.Roundtrip(ctx, `{"op":"ping"}`)
+        return err
+    })
+}
+```
+
+A `WebSocketClient` carries a single message stream and is **not safe for concurrent use** — dial one per scenario iteration (as above) or keep a per-goroutine pool. TTFB is not measured for WebSocket.
+
+### Multipart uploads
+
+`transport.BuildMultipart` assembles a `multipart/form-data` body (text fields + files) and returns it with the matching `Content-Type`; `HTTPClient.DoMultipart` sends it with that header per request. Useful for load-testing file-upload endpoints.
+
+```go
+png, _ := os.ReadFile("avatar.png")
+body, ct, err := transport.BuildMultipart(
+    map[string]string{"user_id": "42"},
+    []transport.MultipartFile{{FieldName: "file", FileName: "avatar.png", Content: png, ContentType: "image/png"}},
+)
+if err != nil { ... }
+
+scenario := func(ctx context.Context) (int, error) {
+    return client.DoMultipart(ctx, "POST", "http://localhost:8080/upload", body, ct)
+}
+```
+
+Build the body once outside the scenario when the payload is fixed; the byte count is recorded as outbound throughput on each request.
 
 ### Scenario chaining
 
