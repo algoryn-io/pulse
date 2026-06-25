@@ -98,6 +98,16 @@ func (c *checksConfig) toChecks() transport.Checks {
 	}
 }
 
+// toDistributedChecks adapts the YAML checks into the pointer form carried by
+// pulse.HTTPScenarioConfig for forwarding to distributed workers.
+func toDistributedChecks(c *checksConfig) *transport.Checks {
+	if c == nil {
+		return nil
+	}
+	checks := c.toChecks()
+	return &checks
+}
+
 type thresholdsConfig struct {
 	ErrorRate      float64  `yaml:"errorRate"`
 	MaxMeanLatency duration `yaml:"maxMeanLatency"`
@@ -214,6 +224,7 @@ func Load(path string) (pulse.Test, error) {
 			Method:  method,
 			Headers: cfg.Target.Headers,
 			Body:    cfg.Target.Body,
+			Checks:  toDistributedChecks(cfg.Target.Checks),
 		},
 	}
 

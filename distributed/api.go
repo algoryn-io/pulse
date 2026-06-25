@@ -26,6 +26,19 @@ type HTTPScenario struct {
 	Method  string            `json:"method"`
 	Headers map[string]string `json:"headers,omitempty"`
 	Body    string            `json:"body,omitempty"`
+	// Checks, when set, are response assertions the worker evaluates after each
+	// request (the wire form of transport.Checks). A failed check is reported in
+	// the worker's ErrorCounts under "check_failed".
+	Checks *HTTPChecks `json:"checks,omitempty"`
+}
+
+// HTTPChecks is the wire representation of transport.Checks, forwarded from the
+// coordinator so CLI workers run the same response assertions configured in YAML.
+type HTTPChecks struct {
+	Status       int               `json:"status,omitempty"`
+	HeaderEquals map[string]string `json:"headerEquals,omitempty"`
+	BodyContains []string          `json:"bodyContains,omitempty"`
+	JSONEquals   map[string]string `json:"jsonEquals,omitempty"`
 }
 
 // RunRequest is the JSON body the coordinator POSTs to /run on each worker.
