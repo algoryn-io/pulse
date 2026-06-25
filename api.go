@@ -19,6 +19,7 @@ import (
 	"algoryn.io/pulse/metrics"
 	"algoryn.io/pulse/model"
 	"algoryn.io/pulse/scheduler"
+	"algoryn.io/pulse/transport"
 )
 
 var (
@@ -325,6 +326,9 @@ type HTTPScenarioConfig struct {
 	Method  string
 	Headers map[string]string
 	Body    string
+	// Checks, when set, are response assertions forwarded to CLI workers so a
+	// distributed run evaluates the same checks as a local run.
+	Checks *transport.Checks
 }
 
 // Run validates the test definition and executes it through the engine.
@@ -784,6 +788,19 @@ func toDistributedHTTPScenario(cfg *HTTPScenarioConfig) *distributed.HTTPScenari
 		Method:  cfg.Method,
 		Headers: cfg.Headers,
 		Body:    cfg.Body,
+		Checks:  toDistributedChecks(cfg.Checks),
+	}
+}
+
+func toDistributedChecks(c *transport.Checks) *distributed.HTTPChecks {
+	if c == nil {
+		return nil
+	}
+	return &distributed.HTTPChecks{
+		Status:       c.Status,
+		HeaderEquals: c.HeaderEquals,
+		BodyContains: c.BodyContains,
+		JSONEquals:   c.JSONEquals,
 	}
 }
 

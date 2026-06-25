@@ -131,6 +131,29 @@ func TestChecksWithoutStatusPreserves4xxDefault(t *testing.T) {
 	}
 }
 
+func TestChecksForwardedToDistributedScenario(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	yaml := checksYAML("http://example.com/", ""+
+		"    status: 200\n"+
+		"    bodyContains:\n"+
+		"      - ok\n")
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	test, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	ds := test.Config.DistributedHTTPScenario
+	if ds == nil || ds.Checks == nil {
+		t.Fatal("expected checks forwarded to DistributedHTTPScenario")
+	}
+	if ds.Checks.Status != 200 || len(ds.Checks.BodyContains) != 1 {
+		t.Fatalf("unexpected forwarded checks: %#v", ds.Checks)
+	}
+}
+
 func TestChecksInvalidStatusRejectedAtLoad(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.yaml")

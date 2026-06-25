@@ -261,12 +261,44 @@ func (s *Server) buildHTTPScenario(cfg *distributed.HTTPScenario) func(context.C
 	url := cfg.URL
 	body := cfg.Body
 
-	return func(ctx context.Context) (int, error) {
-		var bodyReader io.Reader
+	newBody := func() io.Reader {
 		if body != "" {
-			bodyReader = strings.NewReader(body)
+			return strings.NewReader(body)
 		}
-		return client.Do(ctx, method, url, bodyReader)
+		return nil
+	}
+
+	if cfg.Checks == nil {
+		return func(ctx context.Context) (int, error) {
+			return client.Do(ctx, method, url, newBody())
+		}
+	}
+
+	// Response checks forwarded from the coordinator: evaluate them with the same
+	// semantics as a local run (an explicit status check governs status
+	// evaluation; otherwise a status >= 400 still fails).
+	checks := toTransportChecks(cfg.Checks)
+	return func(ctx context.Context) (int, error) {
+		resp, err := client.DoWithResponse(ctx, method, url, newBody())
+		if err != nil {
+			return 0, err
+		}
+		if err := checks.Run(resp); err != nil {
+			return resp.StatusCode, err
+		}
+		if !checks.HasStatus() && resp.StatusCode >= http.StatusBadRequest {
+			return resp.StatusCode, &transport.HTTPStatusError{StatusCode: resp.StatusCode}
+		}
+		return resp.StatusCode, nil
+	}
+}
+
+func toTransportChecks(c *distributed.HTTPChecks) transport.Checks {
+	return transport.Checks{
+		Status:       c.Status,
+		HeaderEquals: c.HeaderEquals,
+		BodyContains: c.BodyContains,
+		JSONEquals:   c.JSONEquals,
 	}
 }
 

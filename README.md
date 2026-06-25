@@ -552,7 +552,7 @@ Semantics:
 
 - When a `status` check is set, **it fully governs status evaluation** — e.g. `status: 404` makes a 404 a *success*.
 - When no `status` check is set, the default behavior is preserved: a response status >= 400 still fails (as `http_status_error`), and the other checks run on top.
-- Checks currently apply to **local runs**; in distributed mode (`workers:`) they are not yet forwarded to workers.
+- Checks apply to both **local and distributed** runs: when `workers:` is set, the coordinator forwards the checks to each CLI worker, which evaluates them with identical semantics and reports `check_failed` in its merged result.
 
 The same assertions are available programmatically via `transport.Checks{...}.Run(resp)`, which returns the first failing check wrapped with `transport.ErrCheckFailed` (detect with `errors.Is`).
 
