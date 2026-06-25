@@ -129,8 +129,11 @@ phases:
 
 target:
   method: GET
-  url: http://localhost:8080
-  timeout: 10s          # per-request timeout (default: 30s)
+  url: http://localhost:8080/search
+  query:                # structured query params (URL-encoded, appended to url)
+    q: golang
+    limit: "10"
+  timeout: 10s          # per-request timeout, applied as a context deadline (default: 30s)
   maxIdleConns: 100     # connection pool size across all hosts
   maxIdleConnsPerHost: 20
 
@@ -148,6 +151,8 @@ thresholds:
 ```
 
 Run against a live target or, for a quick check, start the bundled mock in another terminal and point the URL at it. More examples live under [`examples/`](examples/).
+
+`target.query` parameters are URL-encoded and appended to `url` in deterministic (sorted) order; the existing `url` string is left untouched, so any literal query already in `url` and any `{{feeder}}` placeholders are preserved (put dynamic, per-row query values directly in `url`). `target.timeout` is applied as a per-request `context` deadline, so each request is bounded independently and the deadline composes with run cancellation; a request that exceeds it is counted under `deadline_exceeded`.
 
 ### Live dashboard
 
