@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ var (
 	errInvalidTargetURL      = errors.New("config: target url must be an absolute http or https URL")
 	errInvalidCheckStatus    = errors.New("config: check status must be a valid HTTP status code (100-599)")
 	errEmptyCheckHeaderKey   = errors.New("config: check headerEquals key must not be empty")
+	errEmptyQueryKey         = errors.New("config: target query parameter key must not be empty")
 )
 
 const maxConfigBytes = 1 << 20
@@ -72,11 +74,41 @@ type targetConfig struct {
 	URL                 string            `yaml:"url"`
 	Body                string            `yaml:"body"`
 	Headers             map[string]string `yaml:"headers"`
+	Query               map[string]string `yaml:"query"`
 	Timeout             duration          `yaml:"timeout"`
 	MaxIdleConns        int               `yaml:"maxIdleConns"`
 	MaxIdleConnsPerHost int               `yaml:"maxIdleConnsPerHost"`
 	DisableKeepAlives   bool              `yaml:"disableKeepAlives"`
 	Checks              *checksConfig     `yaml:"checks"`
+}
+
+// appendQuery appends URL-encoded query parameters to rawURL without re-parsing
+// the existing URL, so any feeder placeholders ({{var}}) already in the URL are
+// left intact. Keys are emitted in sorted order for deterministic output.
+func appendQuery(rawURL string, params map[string]string) string {
+	if len(params) == 0 {
+		return rawURL
+	}
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var sb strings.Builder
+	for _, k := range keys {
+		if sb.Len() > 0 {
+			sb.WriteByte('&')
+		}
+		sb.WriteString(url.QueryEscape(k))
+		sb.WriteByte('=')
+		sb.WriteString(url.QueryEscape(params[k]))
+	}
+	sep := "?"
+	if strings.Contains(rawURL, "?") {
+		sep = "&"
+	}
+	return rawURL + sep + sb.String()
 }
 
 // checksConfig declares response assertions evaluated after each request for the
@@ -206,6 +238,9 @@ func Load(path string) (pulse.Test, error) {
 		return pulse.Test{}, err
 	}
 
+	// Merge any structured query parameters into the URL once (they are static).
+	effectiveURL := appendQuery(cfg.Target.URL, cfg.Target.Query)
+
 	pulseCfg := pulse.Config{
 		Phases:           toPulsePhases(cfg.Phases),
 		MaxConcurrency:   cfg.MaxConcurrency,
@@ -241,7 +276,7 @@ func Load(path string) (pulse.Test, error) {
 		// (workers: [...] in YAML or --workers on CLI) can forward the target
 		// to CLI workers that have no pre-registered scenario.
 		DistributedHTTPScenario: &pulse.HTTPScenarioConfig{
-			URL:     cfg.Target.URL,
+			URL:     effectiveURL,
 			Method:  method,
 			Headers: cfg.Target.Headers,
 			Body:    cfg.Target.Body,
@@ -254,7 +289,7 @@ func Load(path string) (pulse.Test, error) {
 	}
 
 	client := newHTTPClient(cfg)
-	scenario := buildScenario(client, method, cfg.Target.URL, cfg.Target.Body, cfg.Target.Checks)
+	scenario := buildScenario(client, method, effectiveURL, cfg.Target.Body, cfg.Target.Timeout.Duration, cfg.Target.Checks)
 	test := pulse.Test{
 		Config:   pulseCfg,
 		Scenario: scenario,
@@ -265,10 +300,18 @@ func Load(path string) (pulse.Test, error) {
 
 // buildScenario returns the scenario function for the built-in HTTP target.
 // When checks are configured it uses DoWithResponse so the full response can be
-// asserted; otherwise it takes the lighter Get/Post/Do path.
-func buildScenario(client httpClient, method, targetURL, body string, checksCfg *checksConfig) func(context.Context) (int, error) {
-	if checksCfg == nil {
-		return func(ctx context.Context) (int, error) {
+// asserted; otherwise it takes the lighter Get/Post/Do path. When timeout > 0 a
+// per-request context deadline is applied, so each request is bounded
+// independently and the deadline composes with the run's cancellation.
+func buildScenario(client httpClient, method, targetURL, body string, timeout time.Duration, checksCfg *checksConfig) func(context.Context) (int, error) {
+	var checks transport.Checks
+	hasChecks := checksCfg != nil
+	if hasChecks {
+		checks = checksCfg.toChecks()
+	}
+
+	send := func(ctx context.Context) (int, error) {
+		if !hasChecks {
 			switch method {
 			case http.MethodGet:
 				return client.Get(ctx, targetURL)
@@ -282,10 +325,6 @@ func buildScenario(client httpClient, method, targetURL, body string, checksCfg 
 				return client.Do(ctx, method, targetURL, r)
 			}
 		}
-	}
-
-	checks := checksCfg.toChecks()
-	return func(ctx context.Context) (int, error) {
 		var r io.Reader
 		if body != "" {
 			r = strings.NewReader(body)
@@ -305,6 +344,15 @@ func buildScenario(client httpClient, method, targetURL, body string, checksCfg 
 			return resp.StatusCode, &transport.HTTPStatusError{StatusCode: resp.StatusCode}
 		}
 		return resp.StatusCode, nil
+	}
+
+	if timeout <= 0 {
+		return send
+	}
+	return func(ctx context.Context) (int, error) {
+		reqCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return send(reqCtx)
 	}
 }
 
@@ -332,6 +380,11 @@ func validateConfig(cfg fileConfig, method string) error {
 	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
 	default:
 		return fmt.Errorf("%w: %s", errUnsupportedMethod, method)
+	}
+	for k := range cfg.Target.Query {
+		if strings.TrimSpace(k) == "" {
+			return errEmptyQueryKey
+		}
 	}
 	if c := cfg.Target.Checks; c != nil {
 		if c.Status != 0 && (c.Status < 100 || c.Status > 599) {

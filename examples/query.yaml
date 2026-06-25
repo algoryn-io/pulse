@@ -1,0 +1,24 @@
+# Structured query parameters and a tight per-request timeout.
+# query entries are URL-encoded and appended to url (sorted), producing
+#   http://127.0.0.1:8080/search?limit=10&q=load+testing
+#
+#   go run ./cmd/mockserver --mode healthy
+#   go run ./cmd/pulse run examples/query.yaml
+phases:
+  - type: constant
+    duration: 5s
+    arrivalRate: 20
+
+target:
+  method: GET
+  url: http://127.0.0.1:8080/search
+  query:
+    q: load testing       # spaces and reserved characters are encoded
+    limit: "10"
+  timeout: 2s             # per-request context deadline
+
+maxConcurrency: 4
+
+thresholds:
+  errorRate: 0.01
+  maxP99Latency: 200ms
