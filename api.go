@@ -51,6 +51,12 @@ var (
 	errAbortRequiresInterval     = errors.New("pulse: Abort requires Reporting.Interval > 0")
 	errAbortInvalidErrorRate     = errors.New("pulse: Abort.MaxErrorRate must be in [0,1]")
 	errAbortInvalidP99           = errors.New("pulse: Abort.MaxP99 must not be negative")
+	errStressRequiresInterval       = errors.New("pulse: Stress requires Reporting.Interval > 0")
+	errStressInvalidErrorRate       = errors.New("pulse: Stress.MaxErrorRate must be in [0,1]")
+	errStressInvalidP99             = errors.New("pulse: Stress.MaxP99 must not be negative")
+	errStressNegativeRate           = errors.New("pulse: Stress.StepRPS and Stress.MaxRPS must not be negative")
+	errStressAdaptiveExclusive      = errors.New("pulse: Stress and Adaptive are mutually exclusive")
+	errStressDistributedUnsupported = errors.New("pulse: Stress is not supported in distributed mode (Workers)")
 	errInvalidPercentile         = errors.New("pulse: Percentiles values must be in (0,100)")
 )
 
@@ -75,6 +81,17 @@ type AbortConfig = engine.AbortConfig
 // ErrAborted is returned (joined into the run error) when an AbortConfig limit
 // is breached and the run is stopped early. Detect it with errors.Is.
 var ErrAborted = engine.ErrAborted
+
+// StressConfig enables ramp-to-failure capacity discovery: the arrival rate
+// climbs from the first phase's rate by StepRPS every healthy interval until the
+// target's error rate or P99 latency breaches a failure threshold. The run then
+// stops normally (no error) with Result.Stress reporting the sustained capacity.
+// Requires Reporting.Interval > 0 and is mutually exclusive with Adaptive.
+type StressConfig = engine.StressConfig
+
+// StressResult reports the outcome of a ramp-to-failure run (see StressConfig).
+// It is nil on Result for non-stress runs.
+type StressResult = metrics.StressResult
 
 // SaturationPolicy controls what happens when all execution slots are in use.
 type SaturationPolicy = engine.SaturationPolicy
@@ -209,6 +226,11 @@ type Config struct {
 	// interval breaches a configured error-rate or P99-latency limit. The run
 	// error is wrapped with ErrAborted. Requires Reporting.Interval > 0.
 	Abort AbortConfig
+	// Stress, when non-zero, enables ramp-to-failure capacity discovery. The run
+	// stops when a failure threshold is breached and Result.Stress is populated.
+	// Requires Reporting.Interval > 0, is mutually exclusive with Adaptive, and is
+	// not supported in distributed mode (Workers).
+	Stress StressConfig
 	// Percentiles lists additional latency percentiles (values in (0,100), e.g.
 	// 99.9) to compute for the final result, in addition to the always-reported
 	// P50/P90/P95/P99. Reported in Result.ExtraPercentiles keyed by label
@@ -263,6 +285,9 @@ type Result struct {
 	// across the run. Throughput is BytesIn / Duration (and BytesOut / Duration).
 	BytesIn           int64
 	BytesOut          int64
+	// Stress reports the ramp-to-failure outcome when Config.Stress is enabled;
+	// nil otherwise.
+	Stress            *StressResult
 	StatusCounts      map[int]int64
 	ErrorCounts       map[string]int64
 	ThresholdOutcomes []ThresholdOutcome `json:"-"`
@@ -415,6 +440,7 @@ func RunContext(ctx context.Context, test Test) (Result, error) {
 			OnLiveSnapshot: onLiveSnapshot,
 			Adaptive:       test.Config.Adaptive,
 			Abort:          test.Config.Abort,
+			Stress:         test.Config.Stress,
 			Percentiles:    test.Config.Percentiles,
 		},
 	)
@@ -567,6 +593,27 @@ func ValidateConfig(cfg Config) error {
 		}
 		if cfg.Abort.MaxP99 < 0 {
 			return errAbortInvalidP99
+		}
+	}
+
+	if !cfg.Stress.IsZero() {
+		if cfg.Reporting.Interval == 0 {
+			return errStressRequiresInterval
+		}
+		if cfg.Stress.MaxErrorRate < 0 || cfg.Stress.MaxErrorRate > 1 {
+			return errStressInvalidErrorRate
+		}
+		if cfg.Stress.MaxP99 < 0 {
+			return errStressInvalidP99
+		}
+		if cfg.Stress.StepRPS < 0 || cfg.Stress.MaxRPS < 0 {
+			return errStressNegativeRate
+		}
+		if !cfg.Adaptive.IsZero() {
+			return errStressAdaptiveExclusive
+		}
+		if len(cfg.Workers) > 0 {
+			return errStressDistributedUnsupported
 		}
 	}
 
@@ -839,6 +886,7 @@ func metricsResultToResult(m metrics.Result) Result {
 		ExtraPercentiles: m.ExtraPercentiles,
 		BytesIn:          m.BytesIn,
 		BytesOut:         m.BytesOut,
+		Stress:           m.Stress,
 		Latency:          toLatencyStats(m.Latency),
 		TTFB:             toLatencyStats(m.TTFB),
 	}

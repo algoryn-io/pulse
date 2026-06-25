@@ -44,6 +44,7 @@ type fileConfig struct {
 	SaturationPolicy string           `yaml:"saturationPolicy"`
 	Thresholds       thresholdsConfig `yaml:"thresholds"`
 	Abort            abortConfig      `yaml:"abort"`
+	Stress           stressConfig     `yaml:"stress"`
 	Percentiles      []float64        `yaml:"percentiles"`
 	Reporting        reportingConfig  `yaml:"reporting"`
 	Feeder           *feederConfig    `yaml:"feeder"`
@@ -124,6 +125,18 @@ type abortConfig struct {
 	MaxErrorRate float64  `yaml:"maxErrorRate"`
 	MaxP99       duration `yaml:"maxP99"`
 	MinRequests  int64    `yaml:"minRequests"`
+}
+
+// stressConfig configures ramp-to-failure capacity discovery: climb the arrival
+// rate until a failure threshold is breached. Requires reporting.interval > 0
+// and is mutually exclusive with adaptive / distributed mode.
+type stressConfig struct {
+	StepRPS            int      `yaml:"stepRPS"`
+	MaxRPS             int      `yaml:"maxRPS"`
+	MaxErrorRate       float64  `yaml:"maxErrorRate"`
+	MaxP99             duration `yaml:"maxP99"`
+	SustainedIntervals int      `yaml:"sustainedIntervals"`
+	MinRequests        int64    `yaml:"minRequests"`
 }
 
 type reportingConfig struct {
@@ -211,6 +224,14 @@ func Load(path string) (pulse.Test, error) {
 			MaxErrorRate: cfg.Abort.MaxErrorRate,
 			MaxP99:       cfg.Abort.MaxP99.Duration,
 			MinRequests:  cfg.Abort.MinRequests,
+		},
+		Stress: pulse.StressConfig{
+			StepRPS:            cfg.Stress.StepRPS,
+			MaxRPS:             cfg.Stress.MaxRPS,
+			MaxErrorRate:       cfg.Stress.MaxErrorRate,
+			MaxP99:             cfg.Stress.MaxP99.Duration,
+			SustainedIntervals: cfg.Stress.SustainedIntervals,
+			MinRequests:        cfg.Stress.MinRequests,
 		},
 		Percentiles: cfg.Percentiles,
 		Reporting: pulse.ReportingConfig{

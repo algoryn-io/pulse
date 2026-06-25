@@ -47,6 +47,9 @@ type Result struct {
 	// BytesIn and BytesOut are the total response and request bytes observed.
 	BytesIn  int64
 	BytesOut int64
+	// Stress reports the ramp-to-failure outcome when stress mode is enabled;
+	// nil otherwise. Populated by the engine, not the aggregator.
+	Stress *StressResult
 }
 
 // Snapshot contains metrics observed during one reporting interval.
