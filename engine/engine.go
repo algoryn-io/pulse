@@ -34,6 +34,7 @@ type Engine struct {
 	onLiveSnapshot func(metrics.Snapshot)
 	adaptive       AdaptiveConfig
 	abort          AbortConfig
+	stress         StressConfig
 	percentiles    []float64
 }
 
@@ -53,6 +54,11 @@ type Options struct {
 	// Abort, when non-zero, stops the run early (Run returns ErrAborted) when a
 	// reporting interval breaches a configured limit. Requires ReportInterval > 0.
 	Abort AbortConfig
+	// Stress, when non-zero, enables ramp-to-failure capacity discovery: the
+	// arrival rate climbs until a failure threshold is breached, then the run
+	// stops normally (no error) with Result.Stress populated. Requires
+	// ReportInterval > 0 and is mutually exclusive with Adaptive.
+	Stress StressConfig
 	// Percentiles lists additional latency percentiles (values in (0,100), e.g.
 	// 99.9) to compute for the final result, reported in Result.ExtraPercentiles.
 	Percentiles []float64
@@ -89,6 +95,7 @@ func NewWithOptions(phases []scheduler.Phase, scenario func(context.Context) (in
 		onLiveSnapshot: options.OnLiveSnapshot,
 		adaptive:       options.Adaptive,
 		abort:          options.Abort,
+		stress:         options.Stress,
 		percentiles:    options.Percentiles,
 	}
 }
@@ -104,6 +111,19 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 	var aborted atomic.Bool
+
+	// Stress (ramp-to-failure) uses a single controller for the whole run, seeded
+	// from the first phase's arrival rate. Reaching the failure point stops the
+	// run gracefully (no error) with Result.Stress populated.
+	var stressStopped atomic.Bool
+	var stressCtrl *stressController
+	if !e.stress.IsZero() && e.reportInterval > 0 {
+		base := 0
+		if len(e.phases) > 0 {
+			base = e.phases[0].ArrivalRate
+		}
+		stressCtrl = newStressController(e.stress, base)
+	}
 
 	aggregator := metrics.NewAggregatorWithPercentiles(e.percentiles)
 	defer aggregator.Close()
@@ -159,13 +179,22 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 		return nil
 	}
 
+	// finalize attaches the stress outcome (if any) to a result before returning.
+	finalize := func(r metrics.Result) metrics.Result {
+		if stressCtrl != nil {
+			s := stressCtrl.result()
+			r.Stress = &s
+		}
+		return r
+	}
+
 	// adaptiveCtrl holds the controller for the currently running phase.
 	// Swapped at the start of each phase; read by the interval goroutine.
 	var adaptiveCtrl atomic.Pointer[adaptiveController]
 
 	// Start a background goroutine that ticks at reportInterval to emit live
-	// snapshots, feed the adaptive controller, and evaluate abort thresholds.
-	if e.reportInterval > 0 && (e.onLiveSnapshot != nil || !e.adaptive.IsZero() || !e.abort.IsZero()) {
+	// snapshots, feed the adaptive/stress controllers, and evaluate abort thresholds.
+	if e.reportInterval > 0 && (e.onLiveSnapshot != nil || !e.adaptive.IsZero() || !e.abort.IsZero() || stressCtrl != nil) {
 		liveCtx, liveCancel := context.WithCancel(runCtx)
 		var liveWG sync.WaitGroup
 		liveWG.Add(1)
@@ -200,6 +229,14 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 							runCancel() // stop scheduler and in-flight scenarios
 							return
 						}
+						if stressCtrl != nil {
+							stressCtrl.onSnapshot(snap)
+							if stressCtrl.isDone() {
+								stressStopped.Store(true)
+								runCancel() // capacity found; stop the ramp
+								return
+							}
+						}
 					}
 				}
 			}
@@ -208,7 +245,11 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 
 	for _, phase := range e.phases {
 		p := phase
-		if !e.adaptive.IsZero() && e.reportInterval > 0 {
+		switch {
+		case stressCtrl != nil:
+			// Stress mode drives the rate for the whole run via one controller.
+			p.RateFunc = stressCtrl.rate
+		case !e.adaptive.IsZero() && e.reportInterval > 0:
 			ctrl := newAdaptiveController(e.adaptive, p.ArrivalRate)
 			adaptiveCtrl.Store(ctrl)
 			p.RateFunc = ctrl.rate
@@ -216,19 +257,25 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 		if err := scheduler.Run(runCtx, p, wrappedScenario); err != nil {
 			adaptiveCtrl.Store(nil)
 			wg.Wait()
+			result := finalize(withLoadStats(aggregator.Result(time.Since(startedAt)), snapshots, &scheduled, &started, &dropped, &maxActive))
+			// A stress run that reached its failure point cancels runCtx the same
+			// way an abort does, but that is the expected, successful outcome.
+			if stressStopped.Load() {
+				return result, nil
+			}
 			// An abort cancels runCtx, surfacing as context.Canceled from the
 			// scheduler; report it as ErrAborted so callers can distinguish a
 			// threshold-driven stop from an external cancellation.
 			if aborted.Load() {
 				err = ErrAborted
 			}
-			return withLoadStats(aggregator.Result(time.Since(startedAt)), snapshots, &scheduled, &started, &dropped, &maxActive), err
+			return result, err
 		}
 	}
 	adaptiveCtrl.Store(nil)
 
 	wg.Wait()
-	return withLoadStats(aggregator.Result(time.Since(startedAt)), snapshots, &scheduled, &started, &dropped, &maxActive), nil
+	return finalize(withLoadStats(aggregator.Result(time.Since(startedAt)), snapshots, &scheduled, &started, &dropped, &maxActive)), nil
 }
 
 func updateMax(max *atomic.Int64, candidate int64) {

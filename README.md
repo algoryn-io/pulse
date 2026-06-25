@@ -247,6 +247,39 @@ if errors.Is(err, pulse.ErrAborted) {
 
 `Abort` requires `Reporting.Interval > 0`. `MinRequests` guards against aborting on a tiny, noisy first window. On the CLI, an aborted run prints its partial summary plus a notice and exits non-zero.
 
+### Stress / ramp-to-failure (capacity discovery)
+
+Find the load a target can sustain. Stress mode starts at the phase's arrival rate and raises it by `stepRPS` every healthy reporting interval until the target's error rate or P99 latency breaches a failure threshold, then **stops and reports the sustained capacity**. The phase duration is just a safety ceiling — the run normally stops sooner.
+
+```yaml
+phases:
+  - type: constant
+    duration: 5m          # ceiling; the ramp usually stops earlier
+    arrivalRate: 50       # starting rate
+maxConcurrency: 500       # high enough that arrival rate, not the generator, is the bottleneck
+reporting:
+  interval: 1s
+stress:
+  stepRPS: 50             # +50 RPS after each healthy interval
+  maxRPS: 5000            # safety ceiling (0 = uncapped)
+  maxErrorRate: 0.02      # fail if a window exceeds 2 % errors
+  maxP99: 250ms           # ...or if window P99 exceeds 250ms
+  sustainedIntervals: 2   # require N consecutive breached windows (noise guard)
+  minRequests: 20         # ignore windows with fewer completed requests
+```
+
+```go
+result, _ := pulse.RunContext(ctx, pulse.Test{
+    Config:   pulse.Config{Stress: pulse.StressConfig{StepRPS: 50, MaxP99: 250 * time.Millisecond /* ... */}, /* ... */},
+    Scenario: scenario,
+})
+if s := result.Stress; s != nil && s.Failed {
+    fmt.Printf("capacity ~%d RPS (failed at %d, %s)\n", s.MaxHealthyRPS, s.FailedAtRPS, s.Reason)
+}
+```
+
+Reaching the failure point is the **expected, successful** outcome — `RunContext` returns no error and `Result.Stress` holds `MaxHealthyRPS` (highest sustained rate), `FailedAtRPS`, and `Reason` (`error_rate` or `p99_latency`). If the ramp completes within its bounds without breaching, `Stress.Failed` is `false` and `MaxHealthyRPS` is the top rate reached. The CLI prints a `Capacity (stress): …` line and JSON includes a `stress` block. Requires `Reporting.Interval > 0`, is mutually exclusive with adaptive load shaping, and is **not supported in distributed mode** (capacity is a single-generator measurement).
+
 ### Sessions / cookies
 
 By default an `HTTPClient` has no cookie jar, so requests are stateless. For session-based flows (login → cookie → authenticated requests), call `Session()` at the start of a scenario: it reuses the base client's connection pool but gets a **fresh** cookie jar, keeping each virtual user's session isolated from other concurrent iterations.
