@@ -153,37 +153,37 @@ func cloneHeaderMap(m map[string]string) map[string]string {
 // code and a nil error. If the request fails before a response is received,
 // the status code is 0.
 func (c *HTTPClient) Get(ctx context.Context, url string) (int, error) {
-	return c.do(ctx, http.MethodGet, url, nil)
+	return c.do(ctx, http.MethodGet, url, nil, "")
 }
 
 // Post performs an HTTP POST request with the provided body. On success it
 // returns the response status code and a nil error. If the request fails
 // before a response is received, the status code is 0.
 func (c *HTTPClient) Post(ctx context.Context, url string, body io.Reader) (int, error) {
-	return c.do(ctx, http.MethodPost, url, body)
+	return c.do(ctx, http.MethodPost, url, body, "")
 }
 
 // Put performs an HTTP PUT request with the provided body.
 func (c *HTTPClient) Put(ctx context.Context, url string, body io.Reader) (int, error) {
-	return c.do(ctx, http.MethodPut, url, body)
+	return c.do(ctx, http.MethodPut, url, body, "")
 }
 
 // Delete performs an HTTP DELETE request.
 func (c *HTTPClient) Delete(ctx context.Context, url string) (int, error) {
-	return c.do(ctx, http.MethodDelete, url, nil)
+	return c.do(ctx, http.MethodDelete, url, nil, "")
 }
 
 // Patch performs an HTTP PATCH request with the provided body.
 func (c *HTTPClient) Patch(ctx context.Context, url string, body io.Reader) (int, error) {
-	return c.do(ctx, http.MethodPatch, url, body)
+	return c.do(ctx, http.MethodPatch, url, body, "")
 }
 
 // Do performs an HTTP request with the provided method and optional body.
 func (c *HTTPClient) Do(ctx context.Context, method, url string, body io.Reader) (int, error) {
-	return c.do(ctx, method, url, body)
+	return c.do(ctx, method, url, body, "")
 }
 
-func (c *HTTPClient) do(ctx context.Context, method, url string, body io.Reader) (int, error) {
+func (c *HTTPClient) do(ctx context.Context, method, url string, body io.Reader, contentType string) (int, error) {
 	start := time.Now()
 	tctx, ts := newTrace(ctx, start)
 	req, err := http.NewRequestWithContext(tctx, method, url, body)
@@ -194,6 +194,9 @@ func (c *HTTPClient) do(ctx context.Context, method, url string, body io.Reader)
 
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 
 	resp, err := c.client.Do(req)
