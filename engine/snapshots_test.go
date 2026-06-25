@@ -13,13 +13,13 @@ func TestSnapshotCollectorBuildsIntervalMetrics(t *testing.T) {
 
 	collector.recordScheduled(startedAt.Add(10 * time.Millisecond))
 	collector.recordStarted(startedAt.Add(11*time.Millisecond), 1)
-	collector.recordCompleted(startedAt.Add(40*time.Millisecond), 29*time.Millisecond, 200, nil)
+	collector.recordCompleted(startedAt.Add(40*time.Millisecond), 29*time.Millisecond, 12*time.Millisecond, 120, 40, 200, nil)
 
 	collector.recordScheduled(startedAt.Add(120 * time.Millisecond))
 	collector.recordDropped(startedAt.Add(120 * time.Millisecond))
 	collector.recordScheduled(startedAt.Add(130 * time.Millisecond))
 	collector.recordStarted(startedAt.Add(131*time.Millisecond), 2)
-	collector.recordCompleted(startedAt.Add(180*time.Millisecond), 49*time.Millisecond, 500, errors.New("failed"))
+	collector.recordCompleted(startedAt.Add(180*time.Millisecond), 49*time.Millisecond, 20*time.Millisecond, 200, 60, 500, errors.New("failed"))
 
 	snapshots := collector.snapshots(250 * time.Millisecond)
 	if len(snapshots) != 3 {
@@ -69,7 +69,7 @@ func TestSnapshotCollectorCarriesActiveRequestsIntoFollowingWindows(t *testing.T
 	t.Cleanup(collector.close)
 
 	collector.recordStarted(startedAt.Add(10*time.Millisecond), 1)
-	collector.recordCompleted(startedAt.Add(250*time.Millisecond), 240*time.Millisecond, 200, nil)
+	collector.recordCompleted(startedAt.Add(250*time.Millisecond), 240*time.Millisecond, 100*time.Millisecond, 300, 80, 200, nil)
 
 	snapshots := collector.snapshots(300 * time.Millisecond)
 	if snapshots[1].MaxActive != 1 || snapshots[2].MaxActive != 1 {

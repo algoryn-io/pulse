@@ -44,16 +44,20 @@ type runOptions struct {
 }
 
 type jsonSummary struct {
-	Total       int64   `json:"total"`
-	Failed      int64   `json:"failed"`
-	RPS         float64 `json:"rps"`
-	DurationMS  int64   `json:"duration_ms"`
-	Scheduled   int64   `json:"scheduled"`
-	Started     int64   `json:"started"`
-	Dropped     int64   `json:"dropped"`
-	DroppedRate float64 `json:"dropped_rate"`
-	Completed   int64   `json:"completed"`
-	MaxActive   int64   `json:"max_active"`
+	Total          int64   `json:"total"`
+	Failed         int64   `json:"failed"`
+	RPS            float64 `json:"rps"`
+	DurationMS     int64   `json:"duration_ms"`
+	Scheduled      int64   `json:"scheduled"`
+	Started        int64   `json:"started"`
+	Dropped        int64   `json:"dropped"`
+	DroppedRate    float64 `json:"dropped_rate"`
+	Completed      int64   `json:"completed"`
+	MaxActive      int64   `json:"max_active"`
+	BytesIn        int64   `json:"bytes_in"`
+	BytesOut       int64   `json:"bytes_out"`
+	BytesInPerSec  float64 `json:"bytes_in_per_sec"`
+	BytesOutPerSec float64 `json:"bytes_out_per_sec"`
 }
 
 type jsonLatency struct {
@@ -75,6 +79,7 @@ type jsonSnapshot struct {
 	StartedAt   string           `json:"started_at"`
 	Summary     jsonSummary      `json:"summary"`
 	Latency     jsonLatency      `json:"latency"`
+	TTFB        jsonLatency      `json:"ttfb"`
 	StatusCodes map[string]int64 `json:"status_codes"`
 	Errors      map[string]int64 `json:"errors"`
 }
@@ -83,6 +88,7 @@ type jsonResult struct {
 	SchemaVersion    int                `json:"schema_version"`
 	Summary          jsonSummary        `json:"summary"`
 	Latency          jsonLatency        `json:"latency"`
+	TTFB             jsonLatency        `json:"ttfb"`
 	StatusCodes      map[string]int64   `json:"status_codes"`
 	Errors           map[string]int64   `json:"errors"`
 	ExtraPercentiles map[string]float64 `json:"extra_percentiles,omitempty"`
@@ -602,6 +608,17 @@ func writeText(w io.Writer, result pulse.Result, quiet bool) {
 	fmt.Fprintf(w, "P99 latency: %v\n", result.Latency.P99)
 	fmt.Fprintf(w, "Max latency: %v\n", result.Latency.Max)
 
+	// TTFB is reported only when the transport measured it (HTTP scenarios).
+	if result.TTFB.P50 > 0 || result.TTFB.Mean > 0 {
+		fmt.Fprintf(w, "TTFB P50/P90/P99: %v / %v / %v\n", result.TTFB.P50, result.TTFB.P90, result.TTFB.P99)
+	}
+	if result.BytesIn > 0 || result.BytesOut > 0 {
+		fmt.Fprintf(w, "Bytes in/out: %s / %s\n", humanBytes(result.BytesIn), humanBytes(result.BytesOut))
+		fmt.Fprintf(w, "Throughput in/out: %s/s / %s/s\n",
+			humanBytes(int64(bytesPerSecond(result.BytesIn, result.Duration))),
+			humanBytes(int64(bytesPerSecond(result.BytesOut, result.Duration))))
+	}
+
 	if len(result.ExtraPercentiles) > 0 {
 		labels := make([]string, 0, len(result.ExtraPercentiles))
 		for label := range result.ExtraPercentiles {
@@ -696,27 +713,9 @@ func writeJSON(w io.Writer, result pulse.Result, passed bool) error {
 func toJSONResult(result pulse.Result, passed bool) jsonResult {
 	return jsonResult{
 		SchemaVersion: 1,
-		Summary: jsonSummary{
-			Total:       result.Total,
-			Failed:      result.Failed,
-			RPS:         result.RPS,
-			DurationMS:  durationToMillisecondsInt(result.Duration),
-			Scheduled:   result.Scheduled,
-			Started:     result.Started,
-			Dropped:     result.Dropped,
-			DroppedRate: result.DroppedRate,
-			Completed:   result.Completed,
-			MaxActive:   result.MaxActive,
-		},
-		Latency: jsonLatency{
-			MinMS:  durationToMilliseconds(result.Latency.Min),
-			P50MS:  durationToMilliseconds(result.Latency.P50),
-			MeanMS: durationToMilliseconds(result.Latency.Mean),
-			P90MS:  durationToMilliseconds(result.Latency.P90),
-			P95MS:  durationToMilliseconds(result.Latency.P95),
-			P99MS:  durationToMilliseconds(result.Latency.P99),
-			MaxMS:  durationToMilliseconds(result.Latency.Max),
-		},
+		Summary:          toJSONSummary(result.Total, result.Failed, result.RPS, result.Duration, result.Scheduled, result.Started, result.Dropped, result.DroppedRate, result.Completed, result.MaxActive, result.BytesIn, result.BytesOut),
+		Latency:          toJSONLatency(result.Latency),
+		TTFB:             toJSONLatency(result.TTFB),
 		StatusCodes:      toJSONCountMap(result.StatusCounts),
 		Errors:           cloneStringCountMap(result.ErrorCounts),
 		ExtraPercentiles: toJSONPercentiles(result.ExtraPercentiles),
@@ -733,33 +732,67 @@ func toJSONSnapshots(snapshots []pulse.Snapshot) []jsonSnapshot {
 	result := make([]jsonSnapshot, len(snapshots))
 	for i, snapshot := range snapshots {
 		result[i] = jsonSnapshot{
-			StartedAt: snapshot.StartedAt.Format(time.RFC3339Nano),
-			Summary: jsonSummary{
-				Total:       snapshot.Total,
-				Failed:      snapshot.Failed,
-				RPS:         snapshot.RPS,
-				DurationMS:  durationToMillisecondsInt(snapshot.Duration),
-				Scheduled:   snapshot.Scheduled,
-				Started:     snapshot.Started,
-				Dropped:     snapshot.Dropped,
-				DroppedRate: snapshot.DroppedRate,
-				Completed:   snapshot.Completed,
-				MaxActive:   snapshot.MaxActive,
-			},
-			Latency: jsonLatency{
-				MinMS:  durationToMilliseconds(snapshot.Latency.Min),
-				P50MS:  durationToMilliseconds(snapshot.Latency.P50),
-				MeanMS: durationToMilliseconds(snapshot.Latency.Mean),
-				P90MS:  durationToMilliseconds(snapshot.Latency.P90),
-				P95MS:  durationToMilliseconds(snapshot.Latency.P95),
-				P99MS:  durationToMilliseconds(snapshot.Latency.P99),
-				MaxMS:  durationToMilliseconds(snapshot.Latency.Max),
-			},
+			StartedAt:   snapshot.StartedAt.Format(time.RFC3339Nano),
+			Summary:     toJSONSummary(snapshot.Total, snapshot.Failed, snapshot.RPS, snapshot.Duration, snapshot.Scheduled, snapshot.Started, snapshot.Dropped, snapshot.DroppedRate, snapshot.Completed, snapshot.MaxActive, snapshot.BytesIn, snapshot.BytesOut),
+			Latency:     toJSONLatency(snapshot.Latency),
+			TTFB:        toJSONLatency(snapshot.TTFB),
 			StatusCodes: toJSONCountMap(snapshot.StatusCounts),
 			Errors:      cloneStringCountMap(snapshot.ErrorCounts),
 		}
 	}
 	return result
+}
+
+func toJSONSummary(total, failed int64, rps float64, duration time.Duration, scheduled, started, dropped int64, droppedRate float64, completed, maxActive, bytesIn, bytesOut int64) jsonSummary {
+	return jsonSummary{
+		Total:          total,
+		Failed:         failed,
+		RPS:            rps,
+		DurationMS:     durationToMillisecondsInt(duration),
+		Scheduled:      scheduled,
+		Started:        started,
+		Dropped:        dropped,
+		DroppedRate:    droppedRate,
+		Completed:      completed,
+		MaxActive:      maxActive,
+		BytesIn:        bytesIn,
+		BytesOut:       bytesOut,
+		BytesInPerSec:  bytesPerSecond(bytesIn, duration),
+		BytesOutPerSec: bytesPerSecond(bytesOut, duration),
+	}
+}
+
+func toJSONLatency(l pulse.LatencyStats) jsonLatency {
+	return jsonLatency{
+		MinMS:  durationToMilliseconds(l.Min),
+		P50MS:  durationToMilliseconds(l.P50),
+		MeanMS: durationToMilliseconds(l.Mean),
+		P90MS:  durationToMilliseconds(l.P90),
+		P95MS:  durationToMilliseconds(l.P95),
+		P99MS:  durationToMilliseconds(l.P99),
+		MaxMS:  durationToMilliseconds(l.Max),
+	}
+}
+
+func bytesPerSecond(bytes int64, d time.Duration) float64 {
+	if d <= 0 {
+		return 0
+	}
+	return float64(bytes) / d.Seconds()
+}
+
+// humanBytes formats a byte count with a binary unit suffix (e.g. 1536 → "1.5 KiB").
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 func durationToMilliseconds(d time.Duration) float64 {

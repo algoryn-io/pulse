@@ -1,0 +1,34 @@
+# Response checks: assert status and body content per request.
+# A failing check counts under the "check_failed" error category, so the
+# errorRate threshold below gates the run on check failures too.
+#
+# Try it against the mock server (healthy mode returns 200 with body "ok"):
+#   go run ./cmd/mockserver --mode healthy
+#   go run ./cmd/pulse run examples/checks.yaml
+phases:
+  - type: constant
+    duration: 5s
+    arrivalRate: 20
+
+target:
+  method: GET
+  url: http://localhost:8080
+  checks:
+    status: 200
+    bodyContains:
+      - "ok"
+    # Other available checks (uncomment against a JSON API):
+    # headerEquals:
+    #   Content-Type: application/json
+    # jsonEquals:
+    #   status: "ok"        # numbers/booleans compared by their text form too
+
+maxConcurrency: 4
+saturationPolicy: drop
+
+reporting:
+  interval: 1s
+
+thresholds:
+  errorRate: 0.01      # fail the run if > 1% of requests fail any check
+  maxP99Latency: 200ms

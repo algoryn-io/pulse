@@ -53,6 +53,19 @@ func (c *stubHTTPClient) Do(_ context.Context, method, url string, body io.Reade
 	return 202, nil
 }
 
+func (c *stubHTTPClient) DoWithResponse(_ context.Context, method, url string, body io.Reader) (*transport.Response, error) {
+	c.doMethod = method
+	c.doURL = url
+	if body != nil {
+		payload, err := io.ReadAll(body)
+		if err != nil {
+			return nil, err
+		}
+		c.doBody = string(payload)
+	}
+	return &transport.Response{StatusCode: 200, Header: http.Header{}, Body: nil}, nil
+}
+
 func TestLoadMapsYAMLToPulseTest(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.yaml")

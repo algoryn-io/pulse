@@ -529,6 +529,33 @@ scenario := func(ctx context.Context) (int, error) {
 
 Unlike `Do`, `DoWithResponse` does not error on status >= 400, giving you full control over what counts as a failure.
 
+### Checks (YAML response assertions)
+
+For the built-in HTTP scenario you can declare response assertions directly in YAML under `target.checks`. A failing check marks the request as failed and counts it under the `check_failed` error category (distinct from `http_status_error` and transport failures), so you can gate a run on check failures via `thresholds.errorRate`:
+
+```yaml
+target:
+  method: GET
+  url: http://localhost:8080/health
+  checks:
+    status: 200                       # expected status code (omit to skip)
+    headerEquals:
+      Content-Type: application/json  # exact header match (key canonicalized)
+    bodyContains:                     # every substring must be present
+      - "healthy"
+    jsonEquals:                       # top-level JSON field equals (as text)
+      status: "ok"
+      version: "2"                    # numbers/booleans compared by their text form
+```
+
+Semantics:
+
+- When a `status` check is set, **it fully governs status evaluation** — e.g. `status: 404` makes a 404 a *success*.
+- When no `status` check is set, the default behavior is preserved: a response status >= 400 still fails (as `http_status_error`), and the other checks run on top.
+- Checks currently apply to **local runs**; in distributed mode (`workers:`) they are not yet forwarded to workers.
+
+The same assertions are available programmatically via `transport.Checks{...}.Run(resp)`, which returns the first failing check wrapped with `transport.ErrCheckFailed` (detect with `errors.Is`).
+
 **Mockserver modes**
 
 | Flag | Description |
@@ -546,11 +573,13 @@ go run ./cmd/mockserver --mode flaky --flaky-rate 0.4
 
 ### JSON result shape (summary)
 
-Pulse’s JSON output is a **stable contract** for CI tooling. The top-level object includes `schema_version` (currently `1`), plus `summary` (totals, RPS, `duration_ms`, scheduled / started / dropped / completed requests, dropped rate, and maximum active requests), `latency` with **`min_ms`**, **`p50_ms`**, **`mean_ms`**, **`p90_ms`**, **`p95_ms`**, **`p99_ms`**, **`max_ms`**, `status_codes`, `errors`, per-threshold rows, optional interval `snapshots`, and `passed`.
+Pulse’s JSON output is a **stable contract** for CI tooling. The top-level object includes `schema_version` (currently `1`), plus `summary` (totals, RPS, `duration_ms`, scheduled / started / dropped / completed requests, dropped rate, maximum active requests, and **byte counters** `bytes_in` / `bytes_out` / `bytes_in_per_sec` / `bytes_out_per_sec`), `latency` with **`min_ms`**, **`p50_ms`**, **`mean_ms`**, **`p90_ms`**, **`p95_ms`**, **`p99_ms`**, **`max_ms`**, a **`ttfb`** block with the same fields for time-to-first-byte, `status_codes`, `errors`, per-threshold rows, optional interval `snapshots`, and `passed`.
+
+**TTFB and throughput**: time-to-first-byte is captured per HTTP request via `httptrace` and aggregated in its own histogram, so `ttfb.p99_ms` reflects server response time independent of body-download time. `bytes_in`/`bytes_out` count response and request bytes (request bytes are counted when the body size is known via `Content-Length`); divide by duration for throughput, also provided as `*_per_sec`. TTFB is present only for HTTP scenarios; custom or gRPC scenarios leave the `ttfb` block and byte counters at zero. Both are merged accurately across distributed workers.
 
 **Compatibility**: within `schema_version: 1`, changes are additive only. Breaking changes require a new schema version. When `percentiles` is configured, the result also includes an `extra_percentiles` object (e.g. `{"p99.9_ms": 142.3}`); it is omitted when empty.
 
-The `errors` map groups failures by category: `http_status_error` (status ≥ 400), `deadline_exceeded` (context deadline), `context_canceled` (run cancelled), `timeout` (network I/O timeout), `transport` (connection refused, DNS failures, other `net.Error`s), and `unknown_error` (everything else). The set is **open-ended** — new categories may be added additively, so consumers should not assume a fixed list of keys.
+The `errors` map groups failures by category: `http_status_error` (status ≥ 400), `check_failed` (a response check did not match), `deadline_exceeded` (context deadline), `context_canceled` (run cancelled), `timeout` (network I/O timeout), `transport` (connection refused, DNS failures, other `net.Error`s), and `unknown_error` (everything else). The set is **open-ended** — new categories may be added additively, so consumers should not assume a fixed list of keys.
 
 Set `reporting.interval` to enable temporal snapshots. Enabled intervals must be at least `10ms`, and a run may generate at most `10,000` snapshots. Windows are aligned to the run start. Scheduled arrivals, started requests, and dropped arrivals belong to the interval where they are handled. Completed requests, failures, status codes, errors, and latency belong to the interval where execution finishes. The text report remains a concise global summary; snapshots are emitted in JSON for automation and visualization.
 

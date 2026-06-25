@@ -23,6 +23,8 @@ var (
 	errUnsupportedMethod     = errors.New("config: unsupported target method")
 	errNegativeTargetTimeout = errors.New("config: target timeout must not be negative")
 	errInvalidTargetURL      = errors.New("config: target url must be an absolute http or https URL")
+	errInvalidCheckStatus    = errors.New("config: check status must be a valid HTTP status code (100-599)")
+	errEmptyCheckHeaderKey   = errors.New("config: check headerEquals key must not be empty")
 )
 
 const maxConfigBytes = 1 << 20
@@ -31,6 +33,7 @@ type httpClient interface {
 	Get(ctx context.Context, url string) (int, error)
 	Post(ctx context.Context, url string, body io.Reader) (int, error)
 	Do(ctx context.Context, method, url string, body io.Reader) (int, error)
+	DoWithResponse(ctx context.Context, method, url string, body io.Reader) (*transport.Response, error)
 }
 
 type fileConfig struct {
@@ -72,6 +75,27 @@ type targetConfig struct {
 	MaxIdleConns        int               `yaml:"maxIdleConns"`
 	MaxIdleConnsPerHost int               `yaml:"maxIdleConnsPerHost"`
 	DisableKeepAlives   bool              `yaml:"disableKeepAlives"`
+	Checks              *checksConfig     `yaml:"checks"`
+}
+
+// checksConfig declares response assertions evaluated after each request for the
+// built-in HTTP scenario. A failing check marks the request as failed and is
+// counted under the "check_failed" error category. When no `status` check is
+// set, the default behaviour is preserved: a response status >= 400 still fails.
+type checksConfig struct {
+	Status       int               `yaml:"status"`
+	HeaderEquals map[string]string `yaml:"headerEquals"`
+	BodyContains []string          `yaml:"bodyContains"`
+	JSONEquals   map[string]string `yaml:"jsonEquals"`
+}
+
+func (c *checksConfig) toChecks() transport.Checks {
+	return transport.Checks{
+		Status:       c.Status,
+		HeaderEquals: c.HeaderEquals,
+		BodyContains: c.BodyContains,
+		JSONEquals:   c.JSONEquals,
+	}
 }
 
 type thresholdsConfig struct {
@@ -198,25 +222,58 @@ func Load(path string) (pulse.Test, error) {
 	}
 
 	client := newHTTPClient(cfg)
+	scenario := buildScenario(client, method, cfg.Target.URL, cfg.Target.Body, cfg.Target.Checks)
 	test := pulse.Test{
-		Config: pulseCfg,
-		Scenario: func(ctx context.Context) (int, error) {
-			switch method {
-			case http.MethodGet:
-				return client.Get(ctx, cfg.Target.URL)
-			case http.MethodPost:
-				return client.Post(ctx, cfg.Target.URL, strings.NewReader(cfg.Target.Body))
-			default:
-				var body io.Reader
-				if cfg.Target.Body != "" {
-					body = strings.NewReader(cfg.Target.Body)
-				}
-				return client.Do(ctx, method, cfg.Target.URL, body)
-			}
-		},
+		Config:   pulseCfg,
+		Scenario: scenario,
 	}
 
 	return test, nil
+}
+
+// buildScenario returns the scenario function for the built-in HTTP target.
+// When checks are configured it uses DoWithResponse so the full response can be
+// asserted; otherwise it takes the lighter Get/Post/Do path.
+func buildScenario(client httpClient, method, targetURL, body string, checksCfg *checksConfig) func(context.Context) (int, error) {
+	if checksCfg == nil {
+		return func(ctx context.Context) (int, error) {
+			switch method {
+			case http.MethodGet:
+				return client.Get(ctx, targetURL)
+			case http.MethodPost:
+				return client.Post(ctx, targetURL, strings.NewReader(body))
+			default:
+				var r io.Reader
+				if body != "" {
+					r = strings.NewReader(body)
+				}
+				return client.Do(ctx, method, targetURL, r)
+			}
+		}
+	}
+
+	checks := checksCfg.toChecks()
+	return func(ctx context.Context) (int, error) {
+		var r io.Reader
+		if body != "" {
+			r = strings.NewReader(body)
+		}
+		resp, err := client.DoWithResponse(ctx, method, targetURL, r)
+		if err != nil {
+			return 0, err
+		}
+		if err := checks.Run(resp); err != nil {
+			// The request completed; report its status code so status-count
+			// metrics stay accurate, but mark it failed via the check error.
+			return resp.StatusCode, err
+		}
+		// Preserve the default "4xx/5xx is a failure" semantics unless the user
+		// took explicit control of the status via a status check.
+		if !checks.HasStatus() && resp.StatusCode >= http.StatusBadRequest {
+			return resp.StatusCode, &transport.HTTPStatusError{StatusCode: resp.StatusCode}
+		}
+		return resp.StatusCode, nil
+	}
 }
 
 // validateConfig checks the target-specific fields of a YAML config: the HTTP
@@ -241,10 +298,20 @@ func validateConfig(cfg fileConfig, method string) error {
 	}
 	switch method {
 	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
-		return nil
 	default:
 		return fmt.Errorf("%w: %s", errUnsupportedMethod, method)
 	}
+	if c := cfg.Target.Checks; c != nil {
+		if c.Status != 0 && (c.Status < 100 || c.Status > 599) {
+			return fmt.Errorf("%w: %d", errInvalidCheckStatus, c.Status)
+		}
+		for k := range c.HeaderEquals {
+			if strings.TrimSpace(k) == "" {
+				return errEmptyCheckHeaderKey
+			}
+		}
+	}
+	return nil
 }
 
 func toPulsePhases(phases []phaseConfig) []pulse.Phase {

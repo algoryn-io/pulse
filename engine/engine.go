@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"algoryn.io/pulse/internal"
+	"algoryn.io/pulse/internal/reqmetrics"
 	"algoryn.io/pulse/metrics"
 	"algoryn.io/pulse/scheduler"
 )
@@ -146,11 +147,13 @@ func (e *Engine) Run(ctx context.Context) (metrics.Result, error) {
 			defer limiter.Release()
 			defer active.Add(-1)
 
+			execCtx, sample := reqmetrics.NewContext(ctx)
 			executionStartedAt := time.Now()
-			statusCode, err := e.scenario(ctx)
+			statusCode, err := e.scenario(execCtx)
 			latency := time.Since(executionStartedAt)
-			aggregator.Record(latency, statusCode, err)
-			snapshots.recordCompleted(time.Now(), latency, statusCode, err)
+			ttfb, bytesIn, bytesOut := sample.TTFB(), sample.BytesIn(), sample.BytesOut()
+			aggregator.RecordFull(latency, ttfb, bytesIn, bytesOut, statusCode, err)
+			snapshots.recordCompleted(time.Now(), latency, ttfb, bytesIn, bytesOut, statusCode, err)
 		}()
 
 		return nil

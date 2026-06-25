@@ -32,6 +32,8 @@ func TestNormalizeError(t *testing.T) {
 		{name: "wrapped canceled", err: fmt.Errorf("wrap: %w", context.Canceled), want: "context_canceled"},
 		{name: "deadline", err: context.DeadlineExceeded, want: "deadline_exceeded"},
 		{name: "wrapped deadline", err: fmt.Errorf("wrap: %w", context.DeadlineExceeded), want: "deadline_exceeded"},
+		{name: "check failed", err: transport.ErrCheckFailed, want: "check_failed"},
+		{name: "wrapped check failed", err: fmt.Errorf("assertion failed: %w", transport.ErrCheckFailed), want: "check_failed"},
 		{name: "http status error", err: &transport.HTTPStatusError{StatusCode: 503}, want: "http_status_error"},
 		{name: "wrapped http status error", err: fmt.Errorf("client: %w", &transport.HTTPStatusError{StatusCode: 404}), want: "http_status_error"},
 		{name: "net timeout", err: &fakeNetError{msg: "i/o timeout", timeout: true}, want: "timeout"},

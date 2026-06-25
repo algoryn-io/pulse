@@ -64,6 +64,11 @@ type WorkerResult struct {
 	Completed    int64            `json:"completed"`
 	MaxActive    int64            `json:"maxActive"`
 	Latency      LatencyStats     `json:"latency"`
+	// TTFB holds the worker's time-to-first-byte summary.
+	TTFB LatencyStats `json:"ttfb"`
+	// BytesIn and BytesOut are the worker's total response and request bytes.
+	BytesIn  int64 `json:"bytesIn"`
+	BytesOut int64 `json:"bytesOut"`
 	// StatusCounts keys are decimal HTTP status codes (e.g. "200", "404").
 	StatusCounts map[string]int64 `json:"statusCounts"`
 	ErrorCounts  map[string]int64 `json:"errorCounts"`
@@ -71,6 +76,9 @@ type WorkerResult struct {
 	// stats.Engine. The coordinator sums these across all workers and imports them
 	// into a fresh engine to compute accurate merged latency percentiles.
 	Buckets []uint64 `json:"buckets"`
+	// TTFBBuckets mirrors Buckets for the time-to-first-byte histogram so the
+	// coordinator can compute accurate merged TTFB percentiles.
+	TTFBBuckets []uint64 `json:"ttfbBuckets"`
 }
 
 // PingResponse is the JSON body returned by GET /ping.
