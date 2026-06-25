@@ -634,7 +634,19 @@ Pulse’s JSON output is a **stable contract** for CI tooling. The top-level obj
 
 **Compatibility**: within `schema_version: 1`, changes are additive only. Breaking changes require a new schema version. When `percentiles` is configured, the result also includes an `extra_percentiles` object (e.g. `{"p99.9_ms": 142.3}`); it is omitted when empty.
 
-The `errors` map groups failures by category: `http_status_error` (status ≥ 400), `check_failed` (a response check did not match), `deadline_exceeded` (context deadline), `context_canceled` (run cancelled), `timeout` (network I/O timeout), `transport` (connection refused, DNS failures, other `net.Error`s), and `unknown_error` (everything else). The set is **open-ended** — new categories may be added additively, so consumers should not assume a fixed list of keys.
+The `errors` map groups failures by category: `http_status_error` (status ≥ 400), `check_failed` (a response check did not match), `user_error` (a scenario-originated failure marked with `pulse.UserError`), `deadline_exceeded` (context deadline), `context_canceled` (run cancelled), `timeout` (network I/O timeout), `transport` (connection refused, DNS failures, other `net.Error`s), and `unknown_error` (everything else). The set is **open-ended** — new categories may be added additively, so consumers should not assume a fixed list of keys.
+
+To classify a failure that is the test's responsibility rather than the target's (bad fixtures, business-rule violations, client-side validation), wrap it with `pulse.UserError` inside the scenario so it lands under `user_error` instead of `unknown_error`:
+
+```go
+scenario := func(ctx context.Context) (int, error) {
+    order, err := buildOrder(feeder.Next())
+    if err != nil {
+        return 0, pulse.UserError(err) // counted as user_error
+    }
+    return client.Post(ctx, url, order)
+}
+```
 
 Set `reporting.interval` to enable temporal snapshots. Enabled intervals must be at least `10ms`, and a run may generate at most `10,000` snapshots. Windows are aligned to the run start. Scheduled arrivals, started requests, and dropped arrivals belong to the interval where they are handled. Completed requests, failures, status codes, errors, and latency belong to the interval where execution finishes. The text report remains a concise global summary; snapshots are emitted in JSON for automation and visualization.
 

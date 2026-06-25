@@ -82,6 +82,31 @@ type AbortConfig = engine.AbortConfig
 // is breached and the run is stopped early. Detect it with errors.Is.
 var ErrAborted = engine.ErrAborted
 
+// ErrUser marks an error as originating from scenario/user code rather than the
+// target, so the run counts it under the "user_error" category instead of
+// "unknown_error". Detect it with errors.Is; wrap with UserError.
+var ErrUser = metrics.ErrUser
+
+// UserError wraps err so a run counts it under the "user_error" category. It
+// returns nil when err is nil. The result unwraps to both ErrUser and err, so
+// errors.Is matches either. Use it inside a scenario for failures that are the
+// test's responsibility (bad fixtures, business-rule violations, client-side
+// validation) rather than transport or server errors:
+//
+//	scenario := func(ctx context.Context) (int, error) {
+//	    order, err := buildOrder(feeder.Next())
+//	    if err != nil {
+//	        return 0, pulse.UserError(err) // counted as user_error, not unknown_error
+//	    }
+//	    return client.Post(ctx, url, order)
+//	}
+func UserError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", ErrUser, err)
+}
+
 // StressConfig enables ramp-to-failure capacity discovery: the arrival rate
 // climbs from the first phase's rate by StepRPS every healthy interval until the
 // target's error rate or P99 latency breaches a failure threshold. The run then
