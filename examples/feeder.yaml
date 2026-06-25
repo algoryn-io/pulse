@@ -1,0 +1,31 @@
+# Data-driven run: each iteration draws a row from a CSV (or JSONL) feeder and
+# substitutes {{variable}} placeholders in the target URL and body.
+#
+# Note the {{...}} delimiter — the dollar-brace form is reserved for
+# environment-variable interpolation. Feeders are local-only (not forwarded to
+# distributed workers).
+#
+#   go run ./cmd/mockserver --mode healthy
+#   go run ./cmd/pulse run examples/feeder.yaml      # run from the repo root
+phases:
+  - type: constant
+    duration: 5s
+    arrivalRate: 50
+
+maxConcurrency: 20
+
+target:
+  method: GET
+  url: http://127.0.0.1:8080/users/{{id}}?name={{name}}
+  # For a POST you could template the body too, e.g.:
+  # method: POST
+  # body: '{"id":{{id}},"name":"{{name}}"}'
+
+feeder:
+  format: csv             # csv | jsonl
+  path: users.csv         # relative to this config file's directory
+  mode: round-robin       # round-robin (default, deterministic) | random
+  # seed: 42              # random mode: set for reproducible draws
+
+thresholds:
+  maxP99Latency: 200ms
