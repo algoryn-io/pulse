@@ -231,6 +231,16 @@
       <div class="card-label">P99 Latency</div>
       <div class="card-value" id="c-p99">—</div>
     </div>
+    <div class="card">
+      <div class="card-label">P99 TTFB</div>
+      <div class="card-value" id="c-ttfb">—</div>
+      <div class="card-sub">time to first byte</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Throughput</div>
+      <div class="card-value" id="c-throughput">—</div>
+      <div class="card-sub" id="c-throughput-out"></div>
+    </div>
   </div>
 
   <!-- Charts -->
@@ -332,6 +342,24 @@ function fmtNum(n)   { return n == null ? '—' : n.toLocaleString(); }
 function fmtRPS(r)   { return r == null ? '—' : r.toFixed(1); }
 function fmtPct(f)   { return f == null ? '—' : (f * 100).toFixed(1) + '%'; }
 
+function fmtBytes(n) {
+  if (n == null) return '—';
+  const u = ['B','KiB','MiB','GiB','TiB'];
+  let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return (i === 0 ? v.toFixed(0) : v.toFixed(1)) + ' ' + u[i];
+}
+
+// setTtfbThroughput updates the TTFB and throughput cards from a snapshot or
+// result. seconds is the window/run duration used to derive bytes/sec.
+function setTtfbThroughput(ttfb, bytesIn, bytesOut, seconds) {
+  set('c-ttfb', ttfb && ttfb.p99_ns ? fmtMs(ttfb.p99_ns) : '—');
+  const inRate  = seconds > 0 && bytesIn  ? bytesIn  / seconds : 0;
+  const outRate = seconds > 0 && bytesOut ? bytesOut / seconds : 0;
+  set('c-throughput', inRate > 0 ? '↓ ' + fmtBytes(inRate) + '/s' : '—');
+  set('c-throughput-out', outRate > 0 ? '↑ ' + fmtBytes(outRate) + '/s' : '');
+}
+
 function timeLabel(iso) {
   const d = new Date(iso);
   return d.getHours().toString().padStart(2,'0') + ':' +
@@ -370,6 +398,7 @@ function applySnapshot(snap) {
   const lat = snap.latency || {};
   set('c-p50', lat.p50_ns ? fmtMs(lat.p50_ns) : '—');
   set('c-p99', lat.p99_ns ? fmtMs(lat.p99_ns) : '—');
+  setTtfbThroughput(snap.ttfb, snap.bytes_in, snap.bytes_out, snap.duration_ns ? snap.duration_ns / 1e9 : 0);
 
   // Latency breakdown
   set('lat-min', lat.min_ns  ? fmtMs(lat.min_ns)  : '—');
@@ -425,6 +454,7 @@ function applyDone(result) {
   set('c-failed', fmtNum(result.failed));
   set('c-p50', lat.p50_ns ? fmtMs(lat.p50_ns) : '—');
   set('c-p99', lat.p99_ns ? fmtMs(lat.p99_ns) : '—');
+  setTtfbThroughput(result.ttfb, result.bytes_in, result.bytes_out, result.duration_ms ? result.duration_ms / 1000 : 0);
 }
 
 // ── SSE connection ───────────────────────────────────────────────────

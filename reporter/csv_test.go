@@ -26,7 +26,7 @@ func TestCSVReporterHeaderWrittenOnConstruction(t *testing.T) {
 	if len(recs) != 1 {
 		t.Fatalf("expected only a header row, got %d rows", len(recs))
 	}
-	if recs[0][0] != "kind" || recs[0][len(recs[0])-1] != "passed" {
+	if recs[0][0] != "kind" || recs[0][len(recs[0])-1] != "bytes_out" {
 		t.Fatalf("unexpected header: %v", recs[0])
 	}
 	if len(recs[0]) != len(csvColumns) {
