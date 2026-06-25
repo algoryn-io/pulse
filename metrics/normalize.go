@@ -26,6 +26,12 @@ func normalizeError(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "deadline_exceeded"
 	}
+	// A response check failed: the request completed but the body, headers, or
+	// status did not match the configured expectations. Distinct from a server
+	// error (http_status_error) and from transport failures.
+	if errors.Is(err, transport.ErrCheckFailed) {
+		return "check_failed"
+	}
 	var httpErr *transport.HTTPStatusError
 	if errors.As(err, &httpErr) {
 		return "http_status_error"
