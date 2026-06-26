@@ -12,3 +12,6 @@ dist/
 # test artifacts
 *.test
 *.out
+
+# built CLI binary
+/pulse
