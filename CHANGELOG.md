@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **CLI error-category summary** — the text report now lists errors under `Errors (by frequency):` sorted by descending count with each category's share of total failures (e.g. `http_status_error: 50 (60.0%)`), making the dominant failure cause obvious at a glance. `--quiet` runs gain a single `Top error: <category> (NN% of failures)` line when any request failed, useful in CI logs. JSON output is unchanged
+
 - **WebSocket transport** — `transport.NewWebSocketClient(WebSocketConfig{URL, Origin, Subprotocol, Header, TLSConfig})` dials a `ws://`/`wss://` endpoint (via `golang.org/x/net/websocket`); `SendText`/`SendBinary`/`Receive`/`Roundtrip` exchange messages, mirror the context deadline onto the connection, and record message bytes as Pulse throughput. `transport.CallWebSocket(fn)` adapts an interaction to the `(statusCode, error)` scenario shape (200 on success, 0 on error). A client carries one message stream and is not safe for concurrent use — dial per scenario iteration or pool per goroutine
 
 - **Multipart uploads** — `transport.BuildMultipart(fields, files)` assembles a `multipart/form-data` body (text fields written in sorted order plus `MultipartFile` parts with per-file Content-Type) and returns it with the matching Content-Type header; `HTTPClient.DoMultipart(ctx, method, url, body, contentType)` sends it with that header per request (TTFB and byte metrics recorded as usual), for load-testing file-upload endpoints
