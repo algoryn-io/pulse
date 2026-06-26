@@ -592,12 +592,54 @@ func writeTextOutput(w io.Writer, result pulse.Result, quiet bool, thresholdFail
 	}
 }
 
+// errorCategory pairs an error category name with its occurrence count.
+type errorCategory struct {
+	name  string
+	count int64
+}
+
+// sortedErrorCounts returns the error categories ordered by descending count,
+// breaking ties alphabetically so the output is deterministic.
+func sortedErrorCounts(counts map[string]int64) []errorCategory {
+	if len(counts) == 0 {
+		return nil
+	}
+	out := make([]errorCategory, 0, len(counts))
+	for name, count := range counts {
+		out = append(out, errorCategory{name, count})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].count != out[j].count {
+			return out[i].count > out[j].count
+		}
+		return out[i].name < out[j].name
+	})
+	return out
+}
+
+// errorPercent returns count as a percentage of all categorized failures.
+func errorPercent(count int64, counts map[string]int64) float64 {
+	var total int64
+	for _, v := range counts {
+		total += v
+	}
+	if total == 0 {
+		return 0
+	}
+	return 100 * float64(count) / float64(total)
+}
+
 func writeText(w io.Writer, result pulse.Result, quiet bool) {
 	fmt.Fprintf(w, "Total requests: %d\n", result.Total)
 	fmt.Fprintf(w, "Failed requests: %d\n", result.Failed)
 	fmt.Fprintf(w, "Duration: %v\n", result.Duration)
 	fmt.Fprintf(w, "RPS: %.2f\n", result.RPS)
 	if quiet {
+		// A one-line breakdown of the dominant failure cause, useful in CI logs.
+		if cats := sortedErrorCounts(result.ErrorCounts); len(cats) > 0 {
+			top := cats[0]
+			fmt.Fprintf(w, "Top error: %s (%.1f%% of failures)\n", top.name, errorPercent(top.count, result.ErrorCounts))
+		}
 		return
 	}
 	if result.Scheduled > 0 {
@@ -663,14 +705,9 @@ func writeText(w io.Writer, result pulse.Result, quiet bool) {
 
 	if len(result.ErrorCounts) > 0 {
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, "Errors:")
-		keys := make([]string, 0, len(result.ErrorCounts))
-		for k := range result.ErrorCounts {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			fmt.Fprintf(w, "  %s: %d\n", k, result.ErrorCounts[k])
+		fmt.Fprintln(w, "Errors (by frequency):")
+		for _, c := range sortedErrorCounts(result.ErrorCounts) {
+			fmt.Fprintf(w, "  %s: %d (%.1f%%)\n", c.name, c.count, errorPercent(c.count, result.ErrorCounts))
 		}
 	}
 

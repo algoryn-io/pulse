@@ -137,9 +137,9 @@ func TestRunPrintsResults(t *testing.T) {
 		"  200: 10\n" +
 		"  404: 2\n" +
 		"\n" +
-		"Errors:\n" +
-		"  http_status_error: 3\n" +
-		"  unknown_error: 1\n" +
+		"Errors (by frequency):\n" +
+		"  http_status_error: 3 (75.0%)\n" +
+		"  unknown_error: 1 (25.0%)\n" +
 		"\n" +
 		"Thresholds:\n" +
 		"  PASS error_rate < 0.05\n" +
@@ -453,6 +453,38 @@ func TestRunPrintsQuietTextSummary(t *testing.T) {
 	}
 }
 
+func TestWriteTextErrorsSortedByFrequency(t *testing.T) {
+	var buf bytes.Buffer
+	writeText(&buf, pulse.Result{
+		Total:       10,
+		Failed:      10,
+		Duration:    time.Second,
+		ErrorCounts: map[string]int64{"timeout": 2, "http_status_error": 6, "transport": 2},
+	}, false)
+	out := buf.String()
+	// Most frequent first; ties (timeout vs transport, both 2) broken alphabetically.
+	want := "Errors (by frequency):\n" +
+		"  http_status_error: 6 (60.0%)\n" +
+		"  timeout: 2 (20.0%)\n" +
+		"  transport: 2 (20.0%)\n"
+	if !strings.Contains(out, want) {
+		t.Fatalf("error breakdown not sorted by frequency:\n%s", out)
+	}
+}
+
+func TestWriteTextQuietTopError(t *testing.T) {
+	var buf bytes.Buffer
+	writeText(&buf, pulse.Result{
+		Total:       10,
+		Failed:      4,
+		Duration:    time.Second,
+		ErrorCounts: map[string]int64{"http_status_error": 3, "timeout": 1},
+	}, true)
+	if !strings.Contains(buf.String(), "Top error: http_status_error (75.0% of failures)") {
+		t.Fatalf("quiet top-error line missing:\n%s", buf.String())
+	}
+}
+
 func TestRunRejectsQuietJSONCombination(t *testing.T) {
 	var stdout bytes.Buffer
 	if err := run([]string{"run", "--quiet", "--format", "json"}, &stdout); err == nil {
@@ -546,8 +578,8 @@ func TestRunWritesJSONToFile(t *testing.T) {
 		"Status codes:\n" +
 		"  201: 8\n" +
 		"\n" +
-		"Errors:\n" +
-		"  deadline_exceeded: 2\n" +
+		"Errors (by frequency):\n" +
+		"  deadline_exceeded: 2 (100.0%)\n" +
 		"\n" +
 		"✔ Test passed\n"
 
