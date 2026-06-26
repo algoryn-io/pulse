@@ -513,6 +513,23 @@ scenario := func(ctx context.Context) (int, error) {
 
 Build the body once outside the scenario when the payload is fixed; the byte count is recorded as outbound throughput on each request.
 
+From **YAML**, a `target.multipart` block builds the body at load time (files are read relative to the config file's directory) and sends it on every request — no Go code needed:
+
+```yaml
+target:
+  method: POST
+  url: http://localhost:8080/upload
+  multipart:
+    fields:
+      caption: load test
+    files:
+      - field: file
+        path: upload.txt          # relative to the config file
+        contentType: text/plain   # optional
+```
+
+YAML multipart composes with `checks`, `query`, and `timeout`. It is mutually exclusive with `body`, and not supported with feeders or distributed mode (the binary body cannot be safely JSON-encoded for workers). Each file is capped at 100 MiB.
+
 ### Scenario chaining
 
 `Sequence` composes independent steps into a single scenario. `Flow` does the same but names each step so failures are identifiable in the result error map.
