@@ -28,6 +28,12 @@ var (
 	errInvalidCheckStatus    = errors.New("config: check status must be a valid HTTP status code (100-599)")
 	errEmptyCheckHeaderKey   = errors.New("config: check headerEquals key must not be empty")
 	errEmptyQueryKey         = errors.New("config: target query parameter key must not be empty")
+	errWSMessageRequired     = errors.New("config: a ws:// target requires target.message")
+	errWSInvalidURL          = errors.New("config: target url must include a host")
+	errWSUnsupportedField    = errors.New("config: ws:// targets do not support body, checks, query, headers, or method")
+	errWSFeederUnsupported   = errors.New("config: ws:// targets do not support feeders")
+	errWSDistributed         = errors.New("config: ws:// targets are not supported in distributed mode (workers)")
+	errWSOnlyFields          = errors.New("config: message/subprotocol/expectReply apply only to ws:// or wss:// targets")
 )
 
 const maxConfigBytes = 1 << 20
@@ -82,6 +88,13 @@ type targetConfig struct {
 	MaxIdleConnsPerHost int               `yaml:"maxIdleConnsPerHost"`
 	DisableKeepAlives   bool              `yaml:"disableKeepAlives"`
 	Checks              *checksConfig     `yaml:"checks"`
+
+	// WebSocket fields apply only when url uses a ws:// or wss:// scheme.
+	// Message is the text frame sent each iteration; Subprotocol is optional;
+	// ExpectReply (default true) reads one reply so latency covers the round trip.
+	Message     string `yaml:"message"`
+	Subprotocol string `yaml:"subprotocol"`
+	ExpectReply *bool  `yaml:"expectReply"`
 }
 
 // appendQuery appends URL-encoded query parameters to rawURL without re-parsing
@@ -290,6 +303,15 @@ func Load(path string) (pulse.Test, error) {
 		return pulse.Test{}, err
 	}
 
+	// WebSocket targets use a dedicated per-iteration scenario instead of the
+	// HTTP client pipeline (validated above for incompatible fields/modes).
+	if isWebSocketURL(cfg.Target.URL) {
+		return pulse.Test{
+			Config:   pulseCfg,
+			Scenario: buildWebSocketScenario(cfg.Target),
+		}, nil
+	}
+
 	feeder, err := loadFeeder(cfg, filepath.Dir(path))
 	if err != nil {
 		return pulse.Test{}, err
@@ -450,7 +472,49 @@ func bodyReader(s string) io.Reader {
 // (phases, thresholds, concurrency, saturation policy, reporting) is delegated
 // to pulse.ValidateConfig, which is called after the pulse.Config is built in
 // Load.
+// isWebSocketURL reports whether url uses a ws:// or wss:// scheme.
+func isWebSocketURL(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	return err == nil && (u.Scheme == "ws" || u.Scheme == "wss")
+}
+
+// validateWebSocket validates a ws:// / wss:// target. WebSocket targets use a
+// per-iteration connection and a simple send/receive model, so the HTTP-only
+// fields (body, checks, query, headers, method) and feeders / distributed mode
+// are rejected rather than silently ignored.
+func validateWebSocket(cfg fileConfig) error {
+	t := cfg.Target
+	if t.Timeout.Duration < 0 {
+		return errNegativeTargetTimeout
+	}
+	u, err := url.Parse(strings.TrimSpace(t.URL))
+	if err != nil || u.Host == "" {
+		return errWSInvalidURL
+	}
+	if strings.TrimSpace(t.Message) == "" {
+		return errWSMessageRequired
+	}
+	if t.Body != "" || t.Checks != nil || len(t.Query) > 0 || len(t.Headers) > 0 || strings.TrimSpace(t.Method) != "" {
+		return errWSUnsupportedField
+	}
+	if cfg.Feeder != nil {
+		return errWSFeederUnsupported
+	}
+	if len(cfg.Workers) > 0 {
+		return errWSDistributed
+	}
+	return nil
+}
+
 func validateConfig(cfg fileConfig, method string) error {
+	if isWebSocketURL(cfg.Target.URL) {
+		return validateWebSocket(cfg)
+	}
+	// message/subprotocol/expectReply are WebSocket-only; reject them on HTTP
+	// targets instead of silently ignoring a likely misconfiguration.
+	if cfg.Target.Message != "" || cfg.Target.Subprotocol != "" || cfg.Target.ExpectReply != nil {
+		return errWSOnlyFields
+	}
 	if cfg.Target.Timeout.Duration < 0 {
 		return errNegativeTargetTimeout
 	}
@@ -486,6 +550,41 @@ func validateConfig(cfg fileConfig, method string) error {
 		}
 	}
 	return nil
+}
+
+// buildWebSocketScenario returns a scenario that, each iteration, dials the
+// ws:// endpoint, sends the configured message, optionally reads one reply, and
+// closes the connection. A fresh connection per iteration is required because a
+// WebSocketClient is not safe for concurrent use. target.timeout, when set,
+// bounds the whole exchange via a context deadline.
+func buildWebSocketScenario(t targetConfig) func(context.Context) (int, error) {
+	wsURL := t.URL
+	message := t.Message
+	subprotocol := t.Subprotocol
+	timeout := t.Timeout.Duration
+	expectReply := t.ExpectReply == nil || *t.ExpectReply
+
+	return func(ctx context.Context) (int, error) {
+		if timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
+		ws, err := transport.NewWebSocketClient(transport.WebSocketConfig{URL: wsURL, Subprotocol: subprotocol})
+		if err != nil {
+			return 0, err
+		}
+		defer func() { _ = ws.Close() }()
+
+		if expectReply {
+			if _, err := ws.Roundtrip(ctx, message); err != nil {
+				return 0, err
+			}
+		} else if err := ws.SendText(ctx, message); err != nil {
+			return 0, err
+		}
+		return 200, nil
+	}
 }
 
 func toPulsePhases(phases []phaseConfig) []pulse.Phase {
