@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 ---
 ## [Unreleased]
 
+---
+## [v0.6.0] — 2026-06-26
+
 ### Security
 
 - **Distributed worker authentication** — workers now support a shared bearer token. Set `PULSE_WORKER_TOKEN` on both the worker (`pulse worker`) and the coordinator process; the worker requires `Authorization: Bearer <token>` on `/ping` and `/run` (constant-time comparison) and rejects mismatches with `401`. When the variable is unset the worker still accepts unauthenticated requests (backward compatible) but prints a prominent warning. Library API: `worker.NewWithOptions(scenario, worker.Options{AuthToken, DenyPrivate})` and `coordinator.NewWithOptions(workers, coordinator.Options{AuthToken})`. This closes an unauthenticated remote SSRF / arbitrary-load primitive on exposed workers
