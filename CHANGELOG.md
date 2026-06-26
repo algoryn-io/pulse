@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **YAML WebSocket targets** — a `ws://` or `wss://` `target.url` switches the built-in scenario to WebSocket mode: each iteration dials the endpoint, sends `target.message` (a text frame), reads one reply (`expectReply`, default true) so latency covers the round trip, and closes. `subprotocol` is optional and `target.timeout` bounds each exchange. WebSocket targets reject the HTTP-only fields (`method`/`body`/`checks`/`query`/`headers`) and are not supported with feeders or distributed mode — all reported at load time. A fresh connection per iteration is used because a WebSocket connection is single-threaded
+
 - **YAML multipart uploads** — a `target.multipart` block (text `fields` + `files` with `field`/`path`/`filename`/`contentType`) builds a `multipart/form-data` body at load time and sends it with the matching Content-Type on every request, so file-upload endpoints can be load-tested from YAML with no Go code. Files are read relative to the config file's directory (capped at 100 MiB each). Composes with `checks`, `query`, and `timeout`; mutually exclusive with `body`; rejected with feeders or distributed mode (the binary body cannot be safely JSON-encoded for workers)
 
 - **CLI error-category summary** — the text report now lists errors under `Errors (by frequency):` sorted by descending count with each category's share of total failures (e.g. `http_status_error: 50 (60.0%)`), making the dominant failure cause obvious at a glance. `--quiet` runs gain a single `Top error: <category> (NN% of failures)` line when any request failed, useful in CI logs. JSON output is unchanged

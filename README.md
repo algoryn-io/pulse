@@ -481,6 +481,19 @@ scenario := func(ctx context.Context) (int, error) {
 
 A `WebSocketClient` carries a single message stream and is **not safe for concurrent use** — dial one per scenario iteration (as above) or keep a per-goroutine pool. TTFB is not measured for WebSocket.
 
+From **YAML**, a `ws://` or `wss://` `target.url` switches the built-in scenario to WebSocket mode — each iteration dials, sends `message`, reads one reply (unless `expectReply: false`), and closes:
+
+```yaml
+target:
+  url: ws://localhost:8099/echo
+  message: '{"op":"ping"}'
+  # subprotocol: "chat"   # optional
+  # expectReply: false    # send-only
+  timeout: 2s             # bounds each exchange
+```
+
+WebSocket targets don't use the HTTP fields (`method`/`body`/`checks`/`query`/`headers`) and are rejected with feeders or distributed mode; those incompatibilities are reported at load time.
+
 ### Multipart uploads
 
 `transport.BuildMultipart` assembles a `multipart/form-data` body (text fields + files) and returns it with the matching `Content-Type`; `HTTPClient.DoMultipart` sends it with that header per request. Useful for load-testing file-upload endpoints.

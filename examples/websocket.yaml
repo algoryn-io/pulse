@@ -1,0 +1,27 @@
+# WebSocket load test. A ws:// or wss:// url switches the built-in scenario to
+# WebSocket mode: each iteration dials the endpoint, sends `message`, reads one
+# reply (expectReply, default true), and closes. A fresh connection per iteration
+# is required because a WebSocket connection is single-threaded.
+#
+# WebSocket targets do not use HTTP fields (method/body/checks/query/headers) and
+# are not supported with feeders or distributed mode. target.timeout bounds each
+# exchange. Point this at any echo server, e.g. websocat -s 8099.
+#
+#   go run ./cmd/pulse run examples/websocket.yaml
+phases:
+  - type: constant
+    duration: 5s
+    arrivalRate: 30
+
+maxConcurrency: 20
+
+target:
+  url: ws://127.0.0.1:8099/echo
+  message: '{"op":"ping"}'
+  # subprotocol: "chat"   # optional Sec-WebSocket-Protocol
+  # expectReply: false    # send-only (default true reads one reply)
+  timeout: 2s
+
+thresholds:
+  errorRate: 0.01
+  maxP99Latency: 250ms
