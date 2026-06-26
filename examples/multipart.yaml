@@ -1,0 +1,29 @@
+# Multipart/form-data upload load test. The file is read at load time (relative
+# to this config's directory) and sent as the request body with the matching
+# Content-Type on every request. Works with checks, query, and timeout; not
+# supported with feeders or distributed mode (the binary body is local-only).
+#
+#   go run ./cmd/mockserver --mode healthy
+#   go run ./cmd/pulse run examples/multipart.yaml
+phases:
+  - type: constant
+    duration: 5s
+    arrivalRate: 20
+
+target:
+  method: POST
+  url: http://127.0.0.1:8080/upload
+  multipart:
+    fields:
+      caption: load test
+    files:
+      - field: file
+        path: upload.txt        # relative to this config file's directory
+        contentType: text/plain # optional (default application/octet-stream)
+        # filename: upload.txt  # optional (default: base name of path)
+
+maxConcurrency: 8
+
+thresholds:
+  errorRate: 0.01
+  maxP99Latency: 250ms
