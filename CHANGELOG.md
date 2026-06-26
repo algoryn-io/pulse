@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ---
-## [v0.6.0] — 2026-06-26
+## [v0.7.0] — 2026-06-26
 
 ### Security
 
