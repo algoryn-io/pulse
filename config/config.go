@@ -28,7 +28,15 @@ var (
 	errInvalidCheckStatus    = errors.New("config: check status must be a valid HTTP status code (100-599)")
 	errEmptyCheckHeaderKey   = errors.New("config: check headerEquals key must not be empty")
 	errEmptyQueryKey         = errors.New("config: target query parameter key must not be empty")
+	errMultipartWithBody     = errors.New("config: target.multipart and target.body are mutually exclusive")
+	errMultipartWithFeeder   = errors.New("config: target.multipart is not supported with a feeder")
+	errMultipartDistributed  = errors.New("config: target.multipart is not supported in distributed mode (workers)")
+	errMultipartEmptyField   = errors.New("config: multipart file requires a non-empty field name")
+	errMultipartEmptyPath    = errors.New("config: multipart file requires a path")
+	errMultipartEmpty        = errors.New("config: target.multipart must define at least one field or file")
 )
+
+const maxMultipartFileBytes = 100 << 20 // 100 MiB per uploaded file
 
 const maxConfigBytes = 1 << 20
 
@@ -82,6 +90,30 @@ type targetConfig struct {
 	MaxIdleConnsPerHost int               `yaml:"maxIdleConnsPerHost"`
 	DisableKeepAlives   bool              `yaml:"disableKeepAlives"`
 	Checks              *checksConfig     `yaml:"checks"`
+	Multipart           *multipartConfig  `yaml:"multipart"`
+}
+
+// multipartConfig builds a multipart/form-data request body from text fields and
+// files read at load time. The encoded body and its Content-Type replace
+// target.body; the request is otherwise a normal HTTP request (method, url,
+// query, checks, timeout all apply). Mutually exclusive with target.body and not
+// supported with feeders or distributed mode (the binary body cannot be safely
+// JSON-encoded for workers).
+type multipartConfig struct {
+	Fields map[string]string     `yaml:"fields"`
+	Files  []multipartFileConfig `yaml:"files"`
+}
+
+type multipartFileConfig struct {
+	// Field is the form field name (required).
+	Field string `yaml:"field"`
+	// Path is the file to upload, resolved relative to the config file's
+	// directory (required).
+	Path string `yaml:"path"`
+	// FileName is the uploaded filename; defaults to the base name of Path.
+	FileName string `yaml:"filename"`
+	// ContentType defaults to "application/octet-stream".
+	ContentType string `yaml:"contentType"`
 }
 
 // appendQuery appends URL-encoded query parameters to rawURL without re-parsing
@@ -238,6 +270,21 @@ func Load(path string) (pulse.Test, error) {
 	// below, which avoids duplicating those rules here.
 	if err := validateConfig(cfg, method); err != nil {
 		return pulse.Test{}, err
+	}
+	if err := validateMultipart(cfg); err != nil {
+		return pulse.Test{}, err
+	}
+
+	// A multipart target encodes to a normal HTTP request: build the body once and
+	// inject it (with its Content-Type) so the rest of the pipeline — checks,
+	// query, timeout — applies unchanged. Local-only (rejected above for workers).
+	if cfg.Target.Multipart != nil {
+		body, contentType, err := buildMultipartBody(cfg.Target.Multipart, filepath.Dir(path))
+		if err != nil {
+			return pulse.Test{}, err
+		}
+		cfg.Target.Body = string(body)
+		cfg.Target.Headers = cloneHeadersWith(cfg.Target.Headers, "Content-Type", contentType)
 	}
 
 	// Merge any structured query parameters into the URL once (they are static).
@@ -486,6 +533,91 @@ func validateConfig(cfg fileConfig, method string) error {
 		}
 	}
 	return nil
+}
+
+// validateMultipart checks the multipart config and its incompatibilities. It
+// runs before files are read so misconfiguration fails fast.
+func validateMultipart(cfg fileConfig) error {
+	mp := cfg.Target.Multipart
+	if mp == nil {
+		return nil
+	}
+	if len(mp.Fields) == 0 && len(mp.Files) == 0 {
+		return errMultipartEmpty
+	}
+	if strings.TrimSpace(cfg.Target.Body) != "" {
+		return errMultipartWithBody
+	}
+	if cfg.Feeder != nil {
+		return errMultipartWithFeeder
+	}
+	if len(cfg.Workers) > 0 {
+		return errMultipartDistributed
+	}
+	for _, f := range mp.Files {
+		if strings.TrimSpace(f.Field) == "" {
+			return errMultipartEmptyField
+		}
+		if strings.TrimSpace(f.Path) == "" {
+			return errMultipartEmptyPath
+		}
+	}
+	return nil
+}
+
+// buildMultipartBody reads the configured files (relative to configDir) and
+// assembles the multipart body and its Content-Type header.
+func buildMultipartBody(mp *multipartConfig, configDir string) ([]byte, string, error) {
+	files := make([]transport.MultipartFile, 0, len(mp.Files))
+	for _, f := range mp.Files {
+		path := f.Path
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(configDir, path)
+		}
+		content, err := readCappedFile(path, maxMultipartFileBytes)
+		if err != nil {
+			return nil, "", fmt.Errorf("config: multipart file %q: %w", f.Field, err)
+		}
+		name := f.FileName
+		if name == "" {
+			name = filepath.Base(f.Path)
+		}
+		files = append(files, transport.MultipartFile{
+			FieldName:   f.Field,
+			FileName:    name,
+			Content:     content,
+			ContentType: f.ContentType,
+		})
+	}
+	return transport.BuildMultipart(mp.Fields, files)
+}
+
+// cloneHeadersWith returns a copy of src with key=value set, leaving src
+// unmodified. A nil src yields a new single-entry map.
+func cloneHeadersWith(src map[string]string, key, value string) map[string]string {
+	out := make(map[string]string, len(src)+1)
+	for k, v := range src {
+		out[k] = v
+	}
+	out[key] = value
+	return out
+}
+
+// readCappedFile reads path, failing if it exceeds max bytes.
+func readCappedFile(path string, max int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("file exceeds %d bytes", max)
+	}
+	return data, nil
 }
 
 func toPulsePhases(phases []phaseConfig) []pulse.Phase {

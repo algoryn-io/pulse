@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **YAML multipart uploads** — a `target.multipart` block (text `fields` + `files` with `field`/`path`/`filename`/`contentType`) builds a `multipart/form-data` body at load time and sends it with the matching Content-Type on every request, so file-upload endpoints can be load-tested from YAML with no Go code. Files are read relative to the config file's directory (capped at 100 MiB each). Composes with `checks`, `query`, and `timeout`; mutually exclusive with `body`; rejected with feeders or distributed mode (the binary body cannot be safely JSON-encoded for workers)
+
 - **CLI error-category summary** — the text report now lists errors under `Errors (by frequency):` sorted by descending count with each category's share of total failures (e.g. `http_status_error: 50 (60.0%)`), making the dominant failure cause obvious at a glance. `--quiet` runs gain a single `Top error: <category> (NN% of failures)` line when any request failed, useful in CI logs. JSON output is unchanged
 
 - **WebSocket transport** — `transport.NewWebSocketClient(WebSocketConfig{URL, Origin, Subprotocol, Header, TLSConfig})` dials a `ws://`/`wss://` endpoint (via `golang.org/x/net/websocket`); `SendText`/`SendBinary`/`Receive`/`Roundtrip` exchange messages, mirror the context deadline onto the connection, and record message bytes as Pulse throughput. `transport.CallWebSocket(fn)` adapts an interaction to the `(statusCode, error)` scenario shape (200 on success, 0 on error). A client carries one message stream and is not safe for concurrent use — dial per scenario iteration or pool per goroutine
